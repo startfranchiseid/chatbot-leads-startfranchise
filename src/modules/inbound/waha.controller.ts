@@ -1,0 +1,86 @@
+import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { processWAHAWebhook } from './inbound.service.js';
+import { logger } from '../../infra/logger.js';
+import type { WAHAWebhookPayload } from '../../types/lead.js';
+
+// Reply to WhatsApp via WAHA API
+async function sendWAHAReply(chatId: string, message: string): Promise<void> {
+  const wahaUrl = process.env.WAHA_API_URL || 'http://localhost:3001';
+  const sessionName = process.env.WAHA_SESSION_NAME || 'default';
+  const apiKey = process.env.WAHA_API_KEY || '';
+
+  try {
+    const response = await fetch(`${wahaUrl}/api/sendText`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Api-Key': apiKey,
+      },
+      body: JSON.stringify({
+        chatId: chatId.includes('@') ? chatId : `${chatId}@c.us`,
+        text: message,
+        session: sessionName,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`WAHA API error: ${response.status}`);
+    }
+
+    logger.debug({ chatId }, 'WAHA reply sent');
+  } catch (error) {
+    logger.error({ error, chatId }, 'Failed to send WAHA reply');
+    throw error;
+  }
+}
+
+// Register WAHA routes
+export async function wahaController(fastify: FastifyInstance): Promise<void> {
+  // Health check for WAHA webhook
+  fastify.get('/health', async () => {
+    return { status: 'ok', service: 'waha-webhook' };
+  });
+
+  // WAHA Webhook endpoint
+  fastify.post('/webhook', async (request: FastifyRequest, reply: FastifyReply) => {
+    const startTime = Date.now();
+
+    try {
+      const payload = request.body as WAHAWebhookPayload;
+
+      // Validate webhook secret if configured
+      const webhookSecret = process.env.WAHA_WEBHOOK_SECRET;
+      if (webhookSecret) {
+        const providedSecret = request.headers['x-webhook-secret'];
+        if (providedSecret !== webhookSecret) {
+          logger.warn('Invalid webhook secret');
+          return reply.status(401).send({ error: 'Unauthorized' });
+        }
+      }
+
+      // Process the webhook
+      const result = await processWAHAWebhook(payload);
+
+      // Send reply if needed
+      if (result.shouldReply && result.replyMessage && payload.payload?.from) {
+        // Don't await - send async for faster response
+        sendWAHAReply(payload.payload.from, result.replyMessage).catch((err) => {
+          logger.error({ err }, 'Failed to send WAHA reply');
+        });
+      }
+
+      const duration = Date.now() - startTime;
+      logger.info({ duration, success: result.success }, 'WAHA webhook processed');
+
+      // Always return 200 quickly to acknowledge webhook
+      return reply.status(200).send({ success: true });
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      logger.error({ error, duration }, 'WAHA webhook error');
+
+      // Still return 200 to prevent webhook retry storms
+      // Errors are logged for investigation
+      return reply.status(200).send({ success: false });
+    }
+  });
+}
