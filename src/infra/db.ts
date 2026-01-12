@@ -90,16 +90,33 @@ export async function initializeDatabase(): Promise<void> {
     `);
 
     // Create leads table
+    // user_id = phone@s.whatsapp.net (primary identifier)
+    // whatsapp_lid = @lid format (alternative identifier for linked devices)
     await client.query(`
       CREATE TABLE IF NOT EXISTS leads (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id TEXT UNIQUE NOT NULL,
+        whatsapp_lid TEXT,
         source message_source NOT NULL,
         state TEXT NOT NULL DEFAULT 'NEW',
         warning_count INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
+    `);
+
+    // Add whatsapp_lid column if not exists (for existing tables)
+    await client.query(`
+      DO $$ BEGIN
+        ALTER TABLE leads ADD COLUMN IF NOT EXISTS whatsapp_lid TEXT;
+      EXCEPTION
+        WHEN duplicate_column THEN null;
+      END $$;
+    `);
+
+    // Create index on whatsapp_lid
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_leads_whatsapp_lid ON leads(whatsapp_lid) WHERE whatsapp_lid IS NOT NULL;
     `);
 
     // Create lead_interactions table

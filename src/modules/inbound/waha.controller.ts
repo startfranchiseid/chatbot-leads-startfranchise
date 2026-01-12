@@ -1,10 +1,53 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { processWAHAWebhook } from './inbound.service.js';
+import { processWAHAWebhook, processOutgoingWebhook } from './inbound.service.js';
 import { logger } from '../../infra/logger.js';
 import type { WAHAWebhookPayload } from '../../types/lead.js';
 
+/**
+ * Check if chat is a group chat
+ */
+function isGroupChat(payload: WAHAWebhookPayload): boolean {
+  const chatId = payload.payload?.chatId || 
+                 payload.payload?._data?.key?.remoteJid || 
+                 payload.payload?.from || '';
+  
+  // WhatsApp groups end with @g.us
+  if (chatId.endsWith('@g.us')) {
+    return true;
+  }
+  
+  // Check isGroup flag
+  if (payload.payload?.isGroup) {
+    return true;
+  }
+  
+  // Check if participant exists (indicates group message)
+  if (payload.payload?._data?.key?.participant) {
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Check if message is broadcast/status
+ */
+function isBroadcastOrStatus(payload: WAHAWebhookPayload): boolean {
+  const chatId = payload.payload?.chatId || 
+                 payload.payload?._data?.key?.remoteJid || 
+                 payload.payload?.from || '';
+  
+  return chatId.includes('@broadcast') || chatId.includes('status@');
+}
+
 // Reply to WhatsApp via WAHA API
 async function sendWAHAReply(chatId: string, message: string): Promise<void> {
+  // NEVER send to groups
+  if (chatId.endsWith('@g.us')) {
+    logger.warn({ chatId }, 'Attempted to send to group - blocked');
+    return;
+  }
+
   const wahaUrl = process.env.WAHA_API_URL || 'http://localhost:3001';
   const sessionName = process.env.WAHA_SESSION_NAME || 'default';
   const apiKey = process.env.WAHA_API_KEY || '';
@@ -48,6 +91,30 @@ export async function wahaController(fastify: FastifyInstance): Promise<void> {
     try {
       const payload = request.body as WAHAWebhookPayload;
 
+      // Only process 'message' event, ignore 'message.any' to prevent double processing
+      if (payload.event !== 'message') {
+        logger.debug({ event: payload.event }, 'Ignoring non-message event');
+        return reply.status(200).send({ success: true, type: 'ignored' });
+      }
+
+      // ===== EARLY FILTERS - Before any processing =====
+      
+      // 1. Ignore GROUP messages completely
+      if (isGroupChat(payload)) {
+        logger.debug({ 
+          chatId: payload.payload?.chatId || payload.payload?.from 
+        }, 'Ignoring group message');
+        return reply.status(200).send({ success: true, type: 'group_ignored' });
+      }
+
+      // 2. Ignore broadcast/status messages
+      if (isBroadcastOrStatus(payload)) {
+        logger.debug({ 
+          chatId: payload.payload?.chatId || payload.payload?.from 
+        }, 'Ignoring broadcast/status message');
+        return reply.status(200).send({ success: true, type: 'broadcast_ignored' });
+      }
+
       // Validate webhook secret if configured
       const webhookSecret = process.env.WAHA_WEBHOOK_SECRET;
       if (webhookSecret) {
@@ -58,15 +125,31 @@ export async function wahaController(fastify: FastifyInstance): Promise<void> {
         }
       }
 
-      // Process the webhook
+      // Check if this is an outgoing message (we sent it)
+      const isOutgoing = payload.payload?.fromMe || payload.payload?._data?.key?.fromMe;
+      
+      if (isOutgoing) {
+        // When WE send a message to someone, mark them as EXISTING
+        // So bot won't respond when they reply
+        await processOutgoingWebhook(payload);
+        return reply.status(200).send({ success: true, type: 'outgoing' });
+      }
+
+      // Process incoming message
       const result = await processWAHAWebhook(payload);
 
-      // Send reply if needed
+      // Send reply if needed (NEVER to groups)
       if (result.shouldReply && result.replyMessage && payload.payload?.from) {
-        // Don't await - send async for faster response
-        sendWAHAReply(payload.payload.from, result.replyMessage).catch((err) => {
-          logger.error({ err }, 'Failed to send WAHA reply');
-        });
+        // Get the best chat ID for reply (prefer phone over LID)
+        const replyTo = payload.payload._data?.key?.remoteJidAlt || payload.payload.from;
+        
+        // Double-check: never send to group
+        if (!replyTo.endsWith('@g.us')) {
+          // Don't await - send async for faster response
+          sendWAHAReply(replyTo, result.replyMessage).catch((err) => {
+            logger.error({ err }, 'Failed to send WAHA reply');
+          });
+        }
       }
 
       const duration = Date.now() - startTime;

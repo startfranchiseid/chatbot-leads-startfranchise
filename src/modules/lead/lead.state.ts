@@ -5,6 +5,7 @@ import { logger } from '../../infra/logger.js';
  * Lead State Machine - Valid Transitions
  * 
  * NEW → CHOOSE_OPTION
+ * EXISTING → (no transitions, bot does not respond)
  * CHOOSE_OPTION → FORM_SENT
  * CHOOSE_OPTION → PARTNERSHIP
  * FORM_SENT → FORM_IN_PROGRESS
@@ -16,6 +17,7 @@ import { logger } from '../../infra/logger.js';
 // Define valid state transitions
 const validTransitions: Record<LeadState, LeadState[]> = {
   [LeadStates.NEW]: [LeadStates.CHOOSE_OPTION, LeadStates.MANUAL_INTERVENTION],
+  [LeadStates.EXISTING]: [], // No bot response - nomor lama
   [LeadStates.CHOOSE_OPTION]: [
     LeadStates.FORM_SENT,
     LeadStates.PARTNERSHIP,
@@ -131,8 +133,19 @@ export function getNextState(
  * Check if user is in a state that should not receive bot replies
  */
 export function shouldBotReply(state: LeadState): boolean {
-  // Don't reply to users in manual intervention
-  return state !== LeadStates.MANUAL_INTERVENTION;
+  // Don't reply to:
+  // - EXISTING: nomor lama yang sudah pernah chat / kita chat duluan
+  // - MANUAL_INTERVENTION: sedang dihandle admin
+  // - FORM_COMPLETED: sudah selesai
+  // - PARTNERSHIP: sudah jadi partner
+  const noReplyStates: LeadState[] = [
+    LeadStates.EXISTING,
+    LeadStates.MANUAL_INTERVENTION,
+    LeadStates.FORM_COMPLETED,
+    LeadStates.PARTNERSHIP,
+  ];
+  
+  return !noReplyStates.includes(state);
 }
 
 /**

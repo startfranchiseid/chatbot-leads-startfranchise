@@ -1,17 +1,56 @@
 import type { InboundMessage, WAHAWebhookPayload, TelegramUpdate, MessageSource } from '../../types/lead.js';
-import { normalizeUserId, isGroupChat, isBroadcastMessage } from '../../utils/normalize-user.js';
+import { normalizeUserId, isGroupChat, isBroadcastMessage, isWhatsAppLid } from '../../utils/normalize-user.js';
 import { logger } from '../../infra/logger.js';
 
 /**
+ * Extract the best user ID from WAHA payload
+ * Priority: remoteJidAlt (phone) > from (could be LID)
+ * Also returns the LID if available for cross-reference
+ */
+function extractWAHAUserIds(payload: WAHAWebhookPayload): { userId: string; lid: string | null; phone: string | null } | null {
+  const messagePayload = payload.payload;
+  if (!messagePayload) return null;
+
+  const from = messagePayload.from;
+  const remoteJidAlt = messagePayload._data?.key?.remoteJidAlt;
+  
+  let userId = from;
+  let lid: string | null = null;
+  let phone: string | null = null;
+
+  // If from is a LID and we have remoteJidAlt (phone), prefer phone
+  if (from && isWhatsAppLid(from)) {
+    lid = from;
+    if (remoteJidAlt && remoteJidAlt.includes('@s.whatsapp.net')) {
+      userId = remoteJidAlt;
+      phone = remoteJidAlt;
+    }
+  } else if (from && from.includes('@s.whatsapp.net')) {
+    phone = from;
+    userId = from;
+  }
+
+  if (!userId) return null;
+
+  return { userId, lid, phone };
+}
+
+/**
  * Parse WAHA webhook payload to normalized InboundMessage
+ * Handles both @lid and @s.whatsapp.net formats
  */
 export function parseWAHAMessage(payload: WAHAWebhookPayload): InboundMessage | null {
   try {
     const { event, payload: messagePayload } = payload;
 
     // Only process message events
-    if (event !== 'message') {
+    if (event !== 'message' && event !== 'message.any') {
       logger.debug({ event }, 'Ignoring non-message WAHA event');
+      return null;
+    }
+
+    if (!messagePayload) {
+      logger.debug('No message payload in WAHA webhook');
       return null;
     }
 
@@ -20,42 +59,65 @@ export function parseWAHAMessage(payload: WAHAWebhookPayload): InboundMessage | 
       from,
       body,
       fromMe,
-      isGroup,
       timestamp,
-      chatId,
     } = messagePayload;
 
+    // Get chatId - could be in different places
+    const chatId = messagePayload.chatId || messagePayload._data?.key?.remoteJid || from;
+
     // Reject self messages
-    if (fromMe) {
+    if (fromMe || messagePayload._data?.key?.fromMe) {
       logger.debug({ messageId: id }, 'Ignoring self message');
       return null;
     }
 
     // Reject group messages
-    if (isGroup || isGroupChat(chatId, 'whatsapp')) {
+    const isGroup = messagePayload.isGroup || (chatId && chatId.endsWith('@g.us'));
+    if (isGroup || isGroupChat(chatId || '', 'whatsapp')) {
       logger.debug({ messageId: id, chatId }, 'Ignoring group message');
       return null;
     }
 
     // Reject broadcast/status messages
-    if (isBroadcastMessage(chatId, 'whatsapp')) {
+    if (isBroadcastMessage(chatId || '', 'whatsapp')) {
       logger.debug({ messageId: id, chatId }, 'Ignoring broadcast message');
       return null;
     }
 
-    // Normalize user ID
-    const userId = normalizeUserId(from, 'whatsapp');
+    // Extract user IDs (handles @lid and @s.whatsapp.net)
+    const userIds = extractWAHAUserIds(payload);
+    if (!userIds) {
+      logger.debug({ messageId: id }, 'Could not extract user ID');
+      return null;
+    }
+
+    // Normalize user ID for database lookup
+    const normalizedUserId = normalizeUserId(userIds.userId, 'whatsapp');
+
+    logger.debug({
+      messageId: id,
+      from,
+      userId: normalizedUserId,
+      lid: userIds.lid,
+      phone: userIds.phone,
+    }, 'Parsed WAHA message');
 
     return {
       source: 'whatsapp',
       messageId: id,
-      userId,
+      userId: normalizedUserId,
       text: body || '',
       fromMe: false,
       isGroup: false,
       isBroadcast: false,
-      timestamp,
+      timestamp: timestamp || Math.floor(Date.now() / 1000),
       rawPayload: payload,
+      // Store extra info for LID handling
+      metadata: {
+        lid: userIds.lid,
+        phone: userIds.phone,
+        pushName: messagePayload._data?.pushName || payload.me?.pushName,
+      },
     };
   } catch (error) {
     logger.error({ error, payload }, 'Failed to parse WAHA message');

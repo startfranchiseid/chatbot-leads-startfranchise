@@ -1,6 +1,16 @@
 import { PoolClient } from 'pg';
 import { withTransaction } from '../../infra/db.js';
-import { acquireLockWithRetry, releaseLock } from '../../infra/redis.js';
+import { 
+  acquireLockWithRetry, 
+  releaseLock,
+  isUserInCooldown,
+  setUserCooldown,
+  addToPendingMessages,
+  getPendingMessages,
+  clearPendingMessages,
+  setPendingLock,
+  isPendingLockActive,
+} from '../../infra/redis.js';
 import { addTelegramNotifyJob } from '../../infra/queue.js';
 import { logger } from '../../infra/logger.js';
 import {
@@ -87,21 +97,40 @@ Mohon tunggu, kami akan membantu Anda secepatnya.`,
 };
 
 /**
- * Main message handler
+ * Main message handler with anti-spam protection
  */
 export async function handleInboundMessage(
   message: InboundMessage
 ): Promise<MessageHandlerResult> {
   const { source, messageId, userId, text } = message;
 
-  // 1. Idempotency check
+  // 1. Idempotency check - prevent duplicate message processing
   const isDuplicate = await checkIdempotency(source, messageId);
   if (isDuplicate) {
-    logger.info({ source, messageId }, 'Dropping duplicate message');
+    logger.debug({ source, messageId }, 'Dropping duplicate message');
     return { success: true, shouldReply: false };
   }
 
-  // 2. Acquire user lock
+  // 2. Mark as processed immediately to prevent double processing from message + message.any events
+  await markAsProcessed(source, messageId);
+
+  // 3. Check user cooldown (anti-spam)
+  const inCooldown = await isUserInCooldown(userId);
+  if (inCooldown) {
+    logger.debug({ userId }, 'User in cooldown - queuing message');
+    // Still log the interaction but don't respond
+    try {
+      await withTransaction(async (client) => {
+        const { lead } = await getOrCreateLead(userId, source);
+        await addInteraction(lead.id, messageId, text, 'in', client);
+      });
+    } catch (e) {
+      logger.error({ error: e }, 'Failed to log interaction during cooldown');
+    }
+    return { success: true, shouldReply: false };
+  }
+
+  // 4. Acquire user lock
   const lockResult = await acquireLockWithRetry(userId);
   if (!lockResult.acquired) {
     logger.warn({ userId }, 'Failed to acquire lock - message will be retried');
@@ -109,13 +138,15 @@ export async function handleInboundMessage(
   }
 
   try {
-    // 3. Process message within transaction
+    // 5. Process message within transaction
     const result = await withTransaction(async (client) => {
       return processMessage(client, message);
     });
 
-    // 4. Mark message as processed
-    await markAsProcessed(source, messageId);
+    // 6. Set cooldown after successful response
+    if (result.shouldReply) {
+      await setUserCooldown(userId);
+    }
 
     return result;
   } catch (error) {
@@ -126,7 +157,7 @@ export async function handleInboundMessage(
       error: error instanceof Error ? error.message : 'Unknown error',
     };
   } finally {
-    // 5. Release lock
+    // 7. Release lock
     if (lockResult.lockValue) {
       await releaseLock(userId, lockResult.lockValue);
     }

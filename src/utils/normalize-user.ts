@@ -1,25 +1,55 @@
 /**
+ * Check if the user ID is a WhatsApp LID (Linked Device ID) format
+ * LID format: <numbers>@lid (e.g., 212188648214761@lid)
+ */
+export function isWhatsAppLid(rawId: string): boolean {
+  return rawId.endsWith('@lid');
+}
+
+/**
  * Normalize user ID from different platforms to consistent format
- * WhatsApp: Remove @c.us, @lid suffixes
+ * 
+ * WhatsApp formats:
+ * - Phone: 6281234567890@s.whatsapp.net → 6281234567890@s.whatsapp.net
+ * - LID: 212188648214761@lid → 212188648214761@lid (preserved for lookup)
+ * - Group: 123@g.us → skip
+ * - Status: status@broadcast → skip
+ * 
  * Telegram: Use chat_id as string
+ * 
+ * Note: We now preserve the full format for proper database lookups
  */
 export function normalizeUserId(rawId: string, source: 'whatsapp' | 'telegram'): string {
   if (source === 'whatsapp') {
-    // Remove WhatsApp suffixes: @c.us, @lid, @s.whatsapp.net, @g.us
-    let normalized = rawId
-      .replace(/@c\.us$/i, '')
-      .replace(/@lid$/i, '')
-      .replace(/@s\.whatsapp\.net$/i, '')
-      .replace(/@g\.us$/i, '');
-
-    // Remove any remaining @ suffix
-    const atIndex = normalized.indexOf('@');
-    if (atIndex !== -1) {
-      normalized = normalized.substring(0, atIndex);
+    // For WhatsApp, preserve the full format for database lookup
+    // This allows us to check both user_id and whatsapp_lid columns
+    
+    // If it's a @lid format, keep it as-is for LID lookup
+    if (rawId.endsWith('@lid')) {
+      return rawId;
     }
-
-    // Ensure only digits remain for phone numbers
-    return normalized.replace(/[^\d]/g, '');
+    
+    // If it's a @s.whatsapp.net format, keep it as-is
+    if (rawId.endsWith('@s.whatsapp.net')) {
+      return rawId;
+    }
+    
+    // If it's @c.us (older format), convert to @s.whatsapp.net
+    if (rawId.endsWith('@c.us')) {
+      const phone = rawId.replace(/@c\.us$/i, '');
+      return `${phone}@s.whatsapp.net`;
+    }
+    
+    // If no suffix, add @s.whatsapp.net
+    if (!rawId.includes('@')) {
+      const cleanPhone = rawId.replace(/[^\d]/g, '');
+      if (cleanPhone.length >= 10) {
+        return `${cleanPhone}@s.whatsapp.net`;
+      }
+    }
+    
+    // Return as-is for other cases
+    return rawId;
   }
 
   if (source === 'telegram') {
@@ -28,6 +58,30 @@ export function normalizeUserId(rawId: string, source: 'whatsapp' | 'telegram'):
   }
 
   return rawId;
+}
+
+/**
+ * Extract phone number from WhatsApp user ID (if available)
+ * Returns null for @lid format since phone is unknown
+ */
+export function extractPhoneNumber(userId: string): string | null {
+  // LID format doesn't contain phone number
+  if (userId.endsWith('@lid')) {
+    return null;
+  }
+  
+  // Extract from @s.whatsapp.net or @c.us format
+  const match = userId.match(/^(\d+)@/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  
+  // If pure numbers, return as-is
+  if (/^\d+$/.test(userId)) {
+    return userId;
+  }
+  
+  return null;
 }
 
 /**

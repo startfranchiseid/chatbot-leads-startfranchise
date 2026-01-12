@@ -1,6 +1,7 @@
 // Lead State Machine Types
 export const LeadStates = {
   NEW: 'NEW',
+  EXISTING: 'EXISTING', // Nomor lama yang sudah pernah chat - BOT TIDAK RESPOND
   CHOOSE_OPTION: 'CHOOSE_OPTION',
   FORM_SENT: 'FORM_SENT',
   FORM_IN_PROGRESS: 'FORM_IN_PROGRESS',
@@ -31,6 +32,7 @@ export type MessageDirection = (typeof MessageDirections)[keyof typeof MessageDi
 export interface Lead {
   id: string;
   user_id: string;
+  whatsapp_lid?: string | null; // Alternative WhatsApp Linked ID (@lid format)
   source: MessageSource;
   state: LeadState;
   warning_count: number;
@@ -54,6 +56,7 @@ export interface LeadFormData {
   lead_id: string;
   source_info: string | null;
   business_type: string | null;
+  biodata: string | null;        // Name, location, etc.
   budget: string | null;
   start_plan: string | null;
   completed: boolean;
@@ -71,22 +74,62 @@ export interface InboundMessage {
   isBroadcast: boolean;
   timestamp: number;
   rawPayload?: unknown;
+  // Additional metadata for cross-referencing
+  metadata?: {
+    lid?: string | null;      // WhatsApp Linked ID (@lid format)
+    phone?: string | null;    // Phone number (@s.whatsapp.net format)
+    pushName?: string | null; // Display name from WhatsApp
+  };
 }
 
-// WAHA Webhook Payload
+// WAHA Webhook Payload (Updated for NOWEB engine format)
 export interface WAHAWebhookPayload {
-  event: string;
-  session: string;
-  payload: {
+  id?: string;              // Event ID (evt_xxx)
+  timestamp?: number;       // Event timestamp
+  event: string;            // 'message', 'message.any', etc.
+  session: string;          // Session name
+  me?: {                    // Bot account info
     id: string;
-    from: string;
-    to: string;
-    body: string;
-    fromMe: boolean;
-    isGroup: boolean;
-    timestamp: number;
-    chatId: string;
-    hasMedia: boolean;
+    pushName: string;
+    lid?: string;
+  };
+  payload: {
+    id: string;             // Message ID
+    from: string;           // Sender (can be @lid or @s.whatsapp.net)
+    to?: string;            // Recipient
+    body: string;           // Message text
+    fromMe: boolean;        // Is from self
+    isGroup?: boolean;      // Is group message
+    timestamp: number;      // Message timestamp
+    chatId?: string;        // Chat ID
+    hasMedia?: boolean;
+    source?: string;        // 'app', 'web', etc.
+    ack?: number;
+    ackName?: string;
+    // Extended data from WAHA NOWEB engine
+    _data?: {
+      key?: {
+        remoteJid?: string;      // Same as from
+        remoteJidAlt?: string;   // Alternative ID (phone if from is LID)
+        fromMe?: boolean;
+        id?: string;             // Message unique ID
+        participant?: string;
+        addressingMode?: string; // 'lid' or 'phone'
+      };
+      messageTimestamp?: number;
+      pushName?: string;         // Sender display name
+      broadcast?: boolean;
+      message?: {
+        conversation?: string;
+      };
+      status?: number;
+    };
+  };
+  engine?: string;          // 'NOWEB'
+  environment?: {
+    version: string;
+    engine: string;
+    tier: string;
   };
 }
 

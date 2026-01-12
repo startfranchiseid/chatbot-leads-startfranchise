@@ -14,12 +14,49 @@ import {
 import { attemptTransition, isValidTransition } from './lead.state.js';
 
 /**
+ * Check if user ID is a WhatsApp LID format (@lid)
+ */
+function isLidFormat(userId: string): boolean {
+  return userId.includes('@lid');
+}
+
+/**
  * Get lead by user ID
+ * Checks both user_id column and whatsapp_lid column for @lid format
  */
 export async function getLeadByUserId(userId: string): Promise<Lead | null> {
-  const rows = await query<Lead>(
+  // First try exact match on user_id
+  let rows = await query<Lead>(
     'SELECT * FROM leads WHERE user_id = $1',
     [userId]
+  );
+  
+  if (rows[0]) {
+    return rows[0];
+  }
+
+  // If this is a @lid format, also check whatsapp_lid column
+  if (isLidFormat(userId)) {
+    rows = await query<Lead>(
+      'SELECT * FROM leads WHERE whatsapp_lid = $1',
+      [userId]
+    );
+    if (rows[0]) {
+      logger.debug({ userId, foundVia: 'whatsapp_lid' }, 'Found lead via LID');
+      return rows[0];
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Get lead by LID (WhatsApp Linked Device ID)
+ */
+export async function getLeadByLid(lid: string): Promise<Lead | null> {
+  const rows = await query<Lead>(
+    'SELECT * FROM leads WHERE whatsapp_lid = $1',
+    [lid]
   );
   return rows[0] || null;
 }
@@ -37,14 +74,15 @@ export async function getLeadById(id: string): Promise<Lead | null> {
  */
 export async function createLead(
   userId: string,
-  source: MessageSource
+  source: MessageSource,
+  initialState: LeadState = LeadStates.NEW
 ): Promise<Lead> {
   const id = uuidv4();
   const rows = await query<Lead>(
     `INSERT INTO leads (id, user_id, source, state, warning_count)
      VALUES ($1, $2, $3, $4, 0)
      RETURNING *`,
-    [id, userId, source, LeadStates.NEW]
+    [id, userId, source, initialState]
   );
 
   const lead = rows[0];
@@ -52,7 +90,37 @@ export async function createLead(
     throw new Error('Failed to create lead');
   }
 
-  logger.info({ leadId: id, userId, source }, 'Created new lead');
+  logger.info({ leadId: id, userId, source, state: initialState }, 'Created new lead');
+  return lead;
+}
+
+/**
+ * Mark user as EXISTING (won't receive bot responses)
+ * Used when: 1) Syncing old contacts 2) When WE send message to someone first
+ */
+export async function markAsExisting(
+  userId: string,
+  source: MessageSource
+): Promise<Lead> {
+  // Try to get existing lead first
+  let lead = await getLeadByUserId(userId);
+
+  if (lead) {
+    // Only update if currently NEW (don't override other states)
+    if (lead.state === LeadStates.NEW) {
+      const rows = await query<Lead>(
+        `UPDATE leads SET state = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+        [LeadStates.EXISTING, lead.id]
+      );
+      lead = rows[0] || lead;
+      logger.info({ userId }, 'Marked existing lead as EXISTING');
+    }
+    return lead;
+  }
+
+  // Create new lead with EXISTING state
+  lead = await createLead(userId, source, LeadStates.EXISTING);
+  logger.info({ userId }, 'Created new lead as EXISTING (outgoing message)');
   return lead;
 }
 

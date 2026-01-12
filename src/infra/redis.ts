@@ -132,3 +132,62 @@ export async function markMessageProcessed(
   await redis.setex(key, ttlSeconds, '1');
   logger.debug({ source, messageId, key }, 'Message marked as processed');
 }
+
+// User Cooldown (Anti-Spam)
+const USER_COOLDOWN_SECONDS = parseInt(process.env.USER_COOLDOWN_SECONDS || '2'); // 2 seconds between responses
+
+export async function isUserInCooldown(userId: string): Promise<boolean> {
+  const redis = getRedis();
+  const key = `cooldown:${userId}`;
+  const exists = await redis.exists(key);
+  return exists === 1;
+}
+
+export async function setUserCooldown(
+  userId: string,
+  ttlSeconds: number = USER_COOLDOWN_SECONDS
+): Promise<void> {
+  const redis = getRedis();
+  const key = `cooldown:${userId}`;
+  await redis.setex(key, ttlSeconds, '1');
+  logger.debug({ userId, key, ttl: ttlSeconds }, 'User cooldown set');
+}
+
+// Message Queue for batching (collect rapid messages before responding)
+const MESSAGE_BATCH_WAIT_MS = parseInt(process.env.MESSAGE_BATCH_WAIT_MS || '1500'); // 1.5 seconds
+
+export async function addToPendingMessages(userId: string, messageId: string, text: string): Promise<number> {
+  const redis = getRedis();
+  const key = `pending:${userId}`;
+  const message = JSON.stringify({ messageId, text, timestamp: Date.now() });
+  const length = await redis.rpush(key, message);
+  await redis.expire(key, 60); // Expire after 60 seconds
+  return length;
+}
+
+export async function getPendingMessages(userId: string): Promise<Array<{ messageId: string; text: string; timestamp: number }>> {
+  const redis = getRedis();
+  const key = `pending:${userId}`;
+  const messages = await redis.lrange(key, 0, -1);
+  return messages.map(m => JSON.parse(m));
+}
+
+export async function clearPendingMessages(userId: string): Promise<void> {
+  const redis = getRedis();
+  const key = `pending:${userId}`;
+  await redis.del(key);
+}
+
+export async function setPendingLock(userId: string, ttlMs: number = MESSAGE_BATCH_WAIT_MS): Promise<boolean> {
+  const redis = getRedis();
+  const key = `pending_lock:${userId}`;
+  const result = await redis.set(key, '1', 'PX', ttlMs, 'NX');
+  return result === 'OK';
+}
+
+export async function isPendingLockActive(userId: string): Promise<boolean> {
+  const redis = getRedis();
+  const key = `pending_lock:${userId}`;
+  const exists = await redis.exists(key);
+  return exists === 1;
+}
