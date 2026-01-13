@@ -105,7 +105,26 @@ export async function wahaController(fastify: FastifyInstance): Promise<void> {
         // ignore
       }
 
-      // Only process 'message' event, ignore 'message.any' to prevent double processing
+      // Handle outgoing messages from message.any (when WE send first)
+      // This must happen BEFORE we filter out non-message events
+      if (payload.event === 'message.any') {
+        const isOutgoing = payload.payload?.fromMe || payload.payload?._data?.key?.fromMe;
+
+        if (isOutgoing) {
+          // Skip groups and broadcasts
+          if (!isGroupChat(payload) && !isBroadcastOrStatus(payload)) {
+            logger.info({ event: payload.event, fromMe: true }, 'Processing outgoing message.any');
+            await processOutgoingWebhook(payload);
+          }
+          return reply.status(200).send({ success: true, type: 'outgoing_any' });
+        }
+
+        // Ignore incoming message.any (will be handled by message event)
+        logger.debug({ event: payload.event }, 'Ignoring incoming message.any');
+        return reply.status(200).send({ success: true, type: 'ignored' });
+      }
+
+      // Only process 'message' event for INCOMING messages
       if (payload.event !== 'message') {
         logger.debug({ event: payload.event }, 'Ignoring non-message event');
         return reply.status(200).send({ success: true, type: 'ignored' });
