@@ -16,7 +16,8 @@ export function shouldEscalate(warningCount: number): boolean {
  */
 export function buildEscalationInfo(
   lead: Lead,
-  lastMessage: string
+  lastMessage: string,
+  reason?: string
 ): EscalationInfo {
   return {
     userId: lead.user_id,
@@ -25,6 +26,7 @@ export function buildEscalationInfo(
     warningCount: lead.warning_count,
     source: lead.source,
     timestamp: new Date(),
+    reason,
   };
 }
 
@@ -41,7 +43,7 @@ export async function notifyAdminEscalation(
     });
 
     logger.info(
-      { userId: escalationInfo.userId, warningCount: escalationInfo.warningCount },
+      { userId: escalationInfo.userId, warningCount: escalationInfo.warningCount, reason: escalationInfo.reason },
       'Admin escalation notification queued'
     );
   } catch (error) {
@@ -73,11 +75,12 @@ export function getWarningMessage(warningCount: number): string {
 export function buildAdminMessage(escalationInfo: EscalationInfo): string {
   return `🚨 *ESCALATION ALERT*
 
+*Reason:* ${escalationInfo.reason || 'Manual Escalation'}
 *User ID:* \`${escalationInfo.userId}\`
 *Source:* ${escalationInfo.source.toUpperCase()}
 *Current State:* ${escalationInfo.currentState}
 *Warning Count:* ${escalationInfo.warningCount}
-*Timestamp:* ${escalationInfo.timestamp.toISOString()}
+*Timestamp:* ${new Date(escalationInfo.timestamp).toISOString()}
 
 *Last Message:*
 ${escalationInfo.lastMessage}

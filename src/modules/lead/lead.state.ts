@@ -17,6 +17,7 @@ import { logger } from '../../infra/logger.js';
 // Define valid state transitions
 const validTransitions: Record<LeadState, LeadState[]> = {
   [LeadStates.NEW]: [LeadStates.CHOOSE_OPTION, LeadStates.MANUAL_INTERVENTION],
+  [LeadStates.IMPORTED]: [], // Imported from history - status quo (ignored)
   [LeadStates.EXISTING]: [], // No bot response - nomor lama
   [LeadStates.CHOOSE_OPTION]: [
     LeadStates.FORM_SENT,
@@ -144,7 +145,7 @@ export function shouldBotReply(state: LeadState): boolean {
     LeadStates.FORM_COMPLETED,
     LeadStates.PARTNERSHIP,
   ];
-  
+
   return !noReplyStates.includes(state);
 }
 

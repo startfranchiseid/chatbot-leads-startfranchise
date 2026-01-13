@@ -1,7 +1,8 @@
 // Lead State Machine Types
 export const LeadStates = {
   NEW: 'NEW',
-  EXISTING: 'EXISTING', // Nomor lama yang sudah pernah chat - BOT TIDAK RESPOND
+  IMPORTED: 'IMPORTED', // Synced from WAHA history - ignored by bot
+  EXISTING: 'EXISTING', // Legacy/Manual existing
   CHOOSE_OPTION: 'CHOOSE_OPTION',
   FORM_SENT: 'FORM_SENT',
   FORM_IN_PROGRESS: 'FORM_IN_PROGRESS',
@@ -32,7 +33,9 @@ export type MessageDirection = (typeof MessageDirections)[keyof typeof MessageDi
 export interface Lead {
   id: string;
   user_id: string;
-  whatsapp_lid?: string | null; // Alternative WhatsApp Linked ID (@lid format)
+  alt_id?: string | null;     // Alternate ID (e.g. LID vs Phone), mapped via DB column
+  whatsapp_lid?: string | null; // Keep if needed, but alt_id is the generic DB column
+  push_name?: string | null;
   source: MessageSource;
   state: LeadState;
   warning_count: number;
@@ -185,4 +188,5 @@ export interface EscalationInfo {
   warningCount: number;
   source: MessageSource;
   timestamp: Date;
+  reason?: string;
 }

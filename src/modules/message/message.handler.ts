@@ -25,6 +25,7 @@ import {
 } from '../../types/lead.js';
 import {
   getOrCreateLead,
+  markAsExisting,
   updateLeadState,
   addInteraction,
   incrementWarningCount,
@@ -40,66 +41,8 @@ import {
 } from '../lead/lead.validator.js';
 import { checkIdempotency, markAsProcessed } from './idempotency.js';
 import { detectIntent } from './message.parser.js';
+import { getMessage } from './message.config.js';
 
-// Bot Messages
-const BOT_MESSAGES = {
-  WELCOME: `Halo! 👋 Selamat datang di StartFranchise.
-
-Kami membantu Anda menemukan peluang franchise terbaik.
-
-Silakan pilih:
-1️⃣ Minat Franchise
-2️⃣ Daftar Sebagai Franchisor
-3️⃣ Keperluan lain / Kerja sama`,
-
-  CHOOSE_OPTION: `Terima kasih! Agar kami dapat membantu merekomendasikan franchise yang paling tepat untuk Anda, mohon lengkapi info singkat berikut:
-  
-📝 *Info Calon Mitra*
-
-Silakan copy template di bawah ini, isi data Anda, lalu kirim kembali:`,
-
-  FORM_TEMPLATE: `Nama, Domisili: 
-Sumber info: 
-Jenis bisnis: 
-Budget: 
-Rencana mulai: `,
-
-  FORM_RECEIVED: `✅ Terima kasih! Data Anda sudah kami terima.
-
-Tim konsultan kami akan menganalisa kebutuhan Anda dan segera menghubungi Anda untuk memberikan rekomendasi franchise terbaik.
-
-Jika ada pertanyaan tambahan, silakan chat langsung di sini.`,
-
-  PARTNERSHIP: `Terima kasih atas minat Anda untuk mendaftarkan bisnis sebagai franchisor!
-
-Tim partnership kami akan segera menghubungi Anda untuk diskusi lebih lanjut.
-
-Mohon tunggu konfirmasi dari tim kami.`,
-
-  QUESTION_RECEIVED: `Terima kasih! 
-
-Tim kami akan segera merespons pesan Anda.
-
-Mohon tunggu, kami akan membalas secepatnya.`,
-
-  INVALID_OPTION: `Maaf, pilihan tidak valid. Silakan pilih:
-
-1️⃣ Minat Franchise
-2️⃣ Daftar Sebagai Franchisor
-3️⃣ Keperluan lain / Kerja sama`,
-
-  ESCALATION_NOTICE: `Terima kasih atas kesabaran Anda.
-
-Tim customer service kami akan segera menghubungi Anda secara langsung.
-
-Mohon tunggu, kami akan membantu Anda secepatnya.`,
-
-  OTHER_NEEDS: `Terima kasih! 
-
-Tim kami akan segera merespons pesan Anda.
-
-Mohon tunggu, kami akan membalas secepatnya.`,
-};
 
 /**
  * Main message handler with anti-spam protection
@@ -176,10 +119,31 @@ async function processMessage(
   client: PoolClient,
   message: InboundMessage
 ): Promise<MessageHandlerResult> {
-  const { source, messageId, userId, text } = message;
+  const { source, messageId, userId, text, fromMe } = message;
 
-  // Get or create lead
-  const { lead, isNew } = await getOrCreateLead(userId, source);
+  // 0. Handle Outgoing Messages (We chatted first)
+  if (fromMe) {
+    logger.info({ userId }, 'Processing outgoing message - Marking lead as EXISTING');
+    // Create lead as EXISTING (or update if NEW) -> Bot will NOT trigger
+    const lead = await markAsExisting(userId, source);
+    // Log interaction
+    await addInteraction(lead.id, messageId, text, 'out', client);
+    return { success: true, shouldReply: false };
+  }
+
+  // 1. Get or create lead
+  logger.debug({ userId }, 'Handling inbound message - Step 1: Get/Create Lead');
+
+  // Extract pushName safely (casting if needed or checking metadata)
+  const pushName = (message as any).pushName || message.metadata?.pushName;
+
+  const result = await getOrCreateLead(userId, message.source, {
+    metadata: message.metadata,
+    pushName: pushName
+  });
+  const { lead } = result;
+
+  logger.info({ leadId: lead.id, state: lead.state, userId }, 'Lead retrieved/created');
 
   // Log interaction
   await addInteraction(lead.id, messageId, text, 'in', client);
@@ -243,7 +207,7 @@ async function handleNewState(
   return {
     success: true,
     shouldReply: true,
-    replyMessage: BOT_MESSAGES.WELCOME,
+    replyMessage: await getMessage('WELCOME'),
   };
 }
 
@@ -266,8 +230,8 @@ async function handleChooseOptionState(
     return {
       success: true,
       shouldReply: true,
-      replyMessage: BOT_MESSAGES.CHOOSE_OPTION,
-      secondaryMessage: BOT_MESSAGES.FORM_TEMPLATE,
+      replyMessage: await getMessage('CHOOSE_OPTION'),
+      secondaryMessage: await getMessage('FORM_TEMPLATE'),
     };
   }
 
@@ -277,7 +241,7 @@ async function handleChooseOptionState(
     return {
       success: true,
       shouldReply: true,
-      replyMessage: BOT_MESSAGES.PARTNERSHIP,
+      replyMessage: await getMessage('PARTNERSHIP'),
     };
   }
 
@@ -287,7 +251,7 @@ async function handleChooseOptionState(
     return {
       success: true,
       shouldReply: true,
-      replyMessage: BOT_MESSAGES.OTHER_NEEDS,
+      replyMessage: await getMessage('OTHER_NEEDS'),
     };
   }
 
@@ -299,14 +263,14 @@ async function handleChooseOptionState(
     return {
       success: true,
       shouldReply: true,
-      replyMessage: BOT_MESSAGES.ESCALATION_NOTICE,
+      replyMessage: await getMessage('ESCALATION_NOTICE'),
     };
   }
 
   return {
     success: true,
     shouldReply: true,
-    replyMessage: BOT_MESSAGES.INVALID_OPTION,
+    replyMessage: await getMessage('INVALID_OPTION'),
   };
 }
 
@@ -368,7 +332,7 @@ async function handleFormState(
     return {
       success: true,
       shouldReply: true,
-      replyMessage: BOT_MESSAGES.FORM_RECEIVED,
+      replyMessage: await getMessage('FORM_RECEIVED'),
     };
   }
 
@@ -380,7 +344,7 @@ async function handleFormState(
     return {
       success: true,
       shouldReply: true,
-      replyMessage: BOT_MESSAGES.ESCALATION_NOTICE,
+      replyMessage: await getMessage('ESCALATION_NOTICE'),
     };
   }
 
@@ -408,7 +372,7 @@ async function handleCompletedState(
   return {
     success: true,
     shouldReply: true,
-    replyMessage: BOT_MESSAGES.QUESTION_RECEIVED,
+    replyMessage: await getMessage('QUESTION_RECEIVED'),
   };
 }
 
@@ -427,7 +391,7 @@ async function handlePartnershipState(
   return {
     success: true,
     shouldReply: true,
-    replyMessage: BOT_MESSAGES.QUESTION_RECEIVED,
+    replyMessage: await getMessage('QUESTION_RECEIVED'),
   };
 }
 
@@ -456,6 +420,7 @@ async function handleEscalation(
     warningCount: lead.warning_count,
     source: message.source,
     timestamp: new Date(),
+    reason,
   };
 
   await addTelegramNotifyJob({

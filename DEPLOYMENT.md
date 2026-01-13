@@ -1,215 +1,139 @@
 # Deployment Guide - Chatbot Leads StartFranchise
 
-Panduan lengkap untuk men-deploy sistem Chatbot Leads ke production.
+## Quick Start (VPS)
 
----
+### 1. Prerequisites
+- Docker & Docker Compose installed
+- Domain/IP address
+- WAHA instance running
 
-## 📋 Prerequisites
-
-### Required Services
-- **Node.js** v20+ (LTS)
-- **PostgreSQL** v15+
-- **Redis** v7+
-- **WAHA** (WhatsApp HTTP API)
-- **Telegram Bot** (opsional)
-
-### Domain & SSL
-- Domain untuk webhook (contoh: `api.startfranchise.id`)
-- SSL certificate (Let's Encrypt recommended)
-
----
-
-## 🚀 Deployment Options
-
-### Option 1: Docker Compose (Recommended)
-
+### 2. Clone & Configure
 ```bash
-# Clone repository
-git clone https://github.com/startfranchiseid/chatbot-leads-startfranchise.git
+git clone https://github.com/YOUR_USERNAME/chatbot-leads-startfranchise.git
 cd chatbot-leads-startfranchise
 
-# Copy environment file
+# Copy and edit environment variables
 cp .env.example .env
-
-# Edit environment variables
 nano .env
+```
 
-# Start services
-docker-compose up -d
+### 3. Start Services
+```bash
+# Build and start all containers
+docker-compose up -d --build
 
 # Check logs
 docker-compose logs -f app
 ```
 
-### Option 2: Manual Deployment
+### 4. Access
+- **API**: http://your-server:3000
+- **Health Check**: http://your-server:3000/health
+- **API Docs**: http://your-server:3000/api/docs
+- **Metrics**: http://your-server:3000/metrics
 
+---
+
+## Frontend (Admin Dashboard)
+
+### Build for Production
 ```bash
-# Install dependencies
-npm ci --only=production
-
-# Build TypeScript
+cd client
+npm install
 npm run build
-
-# Start server
-NODE_ENV=production node dist/server.js
 ```
 
----
-
-## ⚙️ Environment Variables
-
-### Required
-
-```env
-# Server
-PORT=3000
-NODE_ENV=production
-
-# Database
-DATABASE_URL=postgresql://user:password@localhost:5432/chatbot_leads
-
-# Redis
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=your_redis_password
-
-# WAHA (WhatsApp)
-WAHA_API_URL=http://waha:3001
-WAHA_API_KEY=your_waha_api_key
-WAHA_SESSION_NAME=default
-```
-
-### Google Sheets (OAuth2)
-
-```env
-GOOGLE_CLIENT_ID=xxx.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=xxx
-GOOGLE_REFRESH_TOKEN=xxx
-GOOGLE_SPREADSHEET_ID=your_spreadsheet_id
-GOOGLE_SHEET_NAME=Informasi Client
-```
-
-### Telegram (Optional)
-
-```env
-TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_ADMIN_CHAT_ID=your_chat_id
-```
-
----
-
-## 🔒 SSL/HTTPS Setup
-
-### Using Nginx as Reverse Proxy
+### Serve with Nginx
+Copy `client/dist/` to your Nginx root directory and configure:
 
 ```nginx
 server {
-    listen 443 ssl;
-    server_name api.startfranchise.id;
-
-    ssl_certificate /etc/letsencrypt/live/api.startfranchise.id/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/api.startfranchise.id/privkey.pem;
+    listen 80;
+    server_name admin.yourdomain.com;
+    root /var/www/chatbot-admin;
+    index index.html;
 
     location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api {
         proxy_pass http://localhost:3000;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
         proxy_cache_bypass $http_upgrade;
     }
 }
 ```
 
-### Using Certbot for SSL
+---
+
+## Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `PORT` | Server port | `3000` |
+| `DB_HOST` | PostgreSQL host | `localhost` |
+| `DB_PASSWORD` | Database password | `secure_password` |
+| `REDIS_HOST` | Redis host | `localhost` |
+| `WAHA_API_URL` | WAHA API URL | `http://localhost:3001` |
+| `WAHA_API_KEY` | WAHA API key | `your_api_key` |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token | `123456:ABC...` |
+| `TELEGRAM_ADMIN_CHAT_ID` | Comma-separated admin IDs | `123456789,987654321` |
+| `GOOGLE_SPREADSHEET_ID` | Google Sheets ID | `1abc123...` |
+
+See `.env.example` for full list.
+
+---
+
+## Useful Commands
 
 ```bash
-# Install certbot
-sudo apt install certbot python3-certbot-nginx
+# Stop all services
+docker-compose down
 
-# Generate certificate
-sudo certbot --nginx -d api.startfranchise.id
+# Restart app only
+docker-compose restart app
+
+# View logs
+docker-compose logs -f
+
+# Rebuild after code changes
+docker-compose up -d --build app
+
+# Access PostgreSQL
+docker-compose exec postgres psql -U chatbot -d chatbot_leads
+
+# Access Redis
+docker-compose exec redis redis-cli
 ```
 
 ---
 
-## 📡 Webhook Setup
+## Webhook Configuration
 
-### WAHA Webhook
 Configure WAHA to send webhooks to:
 ```
-https://api.startfranchise.id/api/waha/webhook
+http://your-server:3000/webhook/waha
 ```
 
-### Telegram Webhook
+---
+
+## Troubleshooting
+
+### Container won't start
 ```bash
-# Set Telegram webhook
-curl -X POST https://api.startfranchise.id/api/telegram/set-webhook \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://api.startfranchise.id"}'
+docker-compose logs app
 ```
 
----
-
-## 🔍 Health Checks
-
+### Database connection failed
 ```bash
-# Basic health check
-curl https://api.startfranchise.id/health
-
-# Readiness check (includes dependencies)
-curl https://api.startfranchise.id/ready
-
-# Prometheus metrics
-curl https://api.startfranchise.id/metrics
+docker-compose exec postgres pg_isready
 ```
 
----
-
-## 📊 Monitoring
-
-### Prometheus Metrics
-Add ke `prometheus.yml`:
-```yaml
-scrape_configs:
-  - job_name: 'chatbot-leads'
-    static_configs:
-      - targets: ['api.startfranchise.id:443']
-    scheme: https
-```
-
-### Available Endpoints
-- `/health` - Server health
-- `/ready` - Service readiness
-- `/metrics` - Prometheus metrics
-- `/api/admin/analytics` - Dashboard stats
-
----
-
-## 🔄 Updates & Maintenance
-
-### Rolling Update with Docker
-
+### Redis connection failed
 ```bash
-# Pull latest changes
-git pull origin main
-
-# Rebuild and restart
-docker-compose build app
-docker-compose up -d app
-
-# Verify
-docker-compose logs -f app
+docker-compose exec redis redis-cli ping
 ```
-
-### Database Migrations
-Database schema auto-initializes on startup. No manual migrations needed.
-
----
-
-## 🆘 Support
-
-- **Docs**: `/api/docs/swagger`
-- **Status**: `/health`
-- **Logs**: `docker-compose logs -f`

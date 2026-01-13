@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { processWAHAWebhook, processOutgoingWebhook } from './inbound.service.js';
+import { query } from '../../infra/db.js';
 import { logger } from '../../infra/logger.js';
 import type { WAHAWebhookPayload } from '../../types/lead.js';
 
@@ -89,8 +90,20 @@ export async function wahaController(fastify: FastifyInstance): Promise<void> {
     const startTime = Date.now();
 
     try {
-      const payload = request.body as WAHAWebhookPayload;
-      logger.info({ payload }, '📦 WAHA WEBHOOK RAW PAYLOAD');
+      const rawPayload = request.body; // 2. Log Raw Webhook (for debugging/audit) & into Database
+      const payload = rawPayload as WAHAWebhookPayload;
+
+      logger.info({ payload: rawPayload }, '📦 WAHA WEBHOOK RAW PAYLOAD');
+
+      try {
+        // Fire and forget db log to not block processing
+        query(
+          `INSERT INTO webhook_logs (source, event_type, payload, status) VALUES ($1, $2, $3, $4)`,
+          ['waha', payload.event || 'unknown', JSON.stringify(rawPayload), 'received']
+        ).catch((e: unknown) => logger.error({ error: e }, 'Failed to log webhook to DB'));
+      } catch (e) {
+        // ignore
+      }
 
       // Only process 'message' event, ignore 'message.any' to prevent double processing
       if (payload.event !== 'message') {
@@ -167,10 +180,13 @@ export async function wahaController(fastify: FastifyInstance): Promise<void> {
       return reply.status(200).send({ success: true });
     } catch (error) {
       const duration = Date.now() - startTime;
-      logger.error({ error, duration }, 'WAHA webhook error');
+      logger.error({
+        err: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        duration
+      }, 'WAHA webhook error');
 
       // Still return 200 to prevent webhook retry storms
-      // Errors are logged for investigation
       return reply.status(200).send({ success: false });
     }
   });

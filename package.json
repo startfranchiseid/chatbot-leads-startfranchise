@@ -25,6 +25,7 @@
   },
   "homepage": "https://github.com/startfranchiseid/chatbot-leads-startfranchise#readme",
   "dependencies": {
+    "@fastify/cors": "^11.2.0",
     "@fastify/rate-limit": "^10.3.0",
     "bullmq": "^5.66.5",
     "dotenv": "^17.2.3",

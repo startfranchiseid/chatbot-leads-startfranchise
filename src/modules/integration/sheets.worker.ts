@@ -192,6 +192,36 @@ export async function initializeSheet(): Promise<void> {
 }
 
 /**
+ * Test Google Sheets connection (for Admin Dashboard)
+ */
+export async function testGoogleSheetsConnection(): Promise<{ success: boolean; message?: string }> {
+  try {
+    const hasOAuth = process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET;
+    const hasServiceAccount = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY;
+
+    if (!hasOAuth && !hasServiceAccount) {
+      return { success: false, message: 'Missing Credentials' };
+    }
+
+    const sheets = getSheetsClient();
+    const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID;
+
+    if (!spreadsheetId) {
+      return { success: false, message: 'Missing Spreadsheet ID' };
+    }
+
+    await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'A1:A1',
+    });
+
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, message: error.message };
+  }
+}
+
+/**
  * Worker processor for sheets sync jobs
  */
 export async function sheetsWorkerProcessor(job: Job<SheetsSyncJobData>): Promise<void> {

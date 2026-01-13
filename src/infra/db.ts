@@ -154,6 +154,16 @@ export async function initializeDatabase(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_lead_form_data_lead_id ON lead_form_data(lead_id);
     `);
 
+    // Create bot_messages table for customizable messages
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS bot_messages (
+        key VARCHAR(50) PRIMARY KEY,
+        content TEXT NOT NULL,
+        description VARCHAR(255),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+
     logger.info('Database schema initialized successfully');
   } finally {
     client.release();

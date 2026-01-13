@@ -1,8 +1,9 @@
 import type { InboundMessage, WAHAWebhookPayload, MessageSource } from '../../types/lead.js';
 import { parseWAHAMessage, parseTelegramMessage, validateMessage } from '../message/message.parser.js';
 import { handleInboundMessage } from '../message/message.handler.js';
-import { markAsExisting } from '../lead/lead.service.js';
+import { markAsExisting, resolveAuthId } from '../lead/lead.service.js';
 import { normalizeUserId } from '../../utils/normalize-user.js';
+import { query, withTransaction } from '../../infra/db.js';
 import { logger } from '../../infra/logger.js';
 
 export interface InboundServiceResult {
@@ -23,16 +24,25 @@ export async function processWAHAWebhook(
 
   // Parse message
   const message = parseWAHAMessage(payload);
-
   if (!message) {
-    return { success: true, shouldReply: false };
+    logger.warn('Failed to parse WAHA message');
+    return { success: false, error: 'Parse failed', shouldReply: false };
   }
 
   // Validate message
   const validation = validateMessage(message);
   if (!validation.valid) {
-    logger.debug({ reason: validation.reason }, 'Message validation failed');
-    return { success: true, shouldReply: false };
+    logger.info({ reason: validation.reason, messageId: message.messageId }, 'Message validation failed');
+    return { success: true, shouldReply: false }; // Return 200 to acknowledge
+  }
+
+  // Resolve User ID (Handle LID vs Phone ID migration)
+  if (message.source === 'whatsapp' && message.metadata?.lid) {
+    const originalId = message.userId;
+    message.userId = await resolveAuthId(message.userId, message.metadata.lid);
+    if (originalId !== message.userId) {
+      logger.info({ originalId, resolvedId: message.userId }, 'ID Resolution: Switched to Phone ID');
+    }
   }
 
   // Handle message

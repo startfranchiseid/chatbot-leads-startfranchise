@@ -1,5 +1,6 @@
 import Fastify, { FastifyInstance } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
+import cors from '@fastify/cors';
 import { logger } from './infra/logger.js';
 import { initializeDatabase } from './infra/db.js';
 import { getRedis } from './infra/redis.js';
@@ -17,6 +18,12 @@ export async function buildApp(): Promise<FastifyInstance> {
     trustProxy: true,
     requestTimeout: 30000,
     bodyLimit: 1048576, // 1MB
+  });
+
+  // Register CORS
+  await app.register(cors, {
+    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   });
 
   // Register rate limiting
@@ -127,6 +134,10 @@ export async function initializeServices(): Promise<void> {
   // Initialize database schema
   await initializeDatabase();
   logger.info('Database initialized');
+
+  // Initialize bot message config (seed defaults)
+  const { initMessageConfig } = await import('./modules/message/message.config.js');
+  await initMessageConfig();
 
   // Initialize Redis (connection test)
   const redis = getRedis();

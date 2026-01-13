@@ -14,6 +14,17 @@ function getTelegramApiUrl(): string {
 }
 
 /**
+ * Get all admin chat IDs (comma-separated in env)
+ */
+function getAdminChatIds(): string[] {
+  const rawIds = process.env.TELEGRAM_ADMIN_CHAT_ID || '';
+  return rawIds
+    .split(',')
+    .map(id => id.trim())
+    .filter(id => id.length > 0);
+}
+
+/**
  * Send message to Telegram
  */
 async function sendTelegramMessage(chatId: string | number, message: string): Promise<void> {
@@ -36,18 +47,84 @@ async function sendTelegramMessage(chatId: string | number, message: string): Pr
 }
 
 /**
- * Send escalation notification to admin
+ * Send message to ALL admin chat IDs
  */
-async function sendEscalationNotification(data: EscalationInfo): Promise<void> {
-  const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+async function sendToAllAdmins(message: string): Promise<void> {
+  const adminIds = getAdminChatIds();
 
-  if (!adminChatId) {
-    logger.warn('TELEGRAM_ADMIN_CHAT_ID not configured - skipping escalation notification');
+  if (adminIds.length === 0) {
+    logger.warn('TELEGRAM_ADMIN_CHAT_ID not configured - skipping notification');
     return;
   }
 
-  const message = buildAdminMessage(data);
-  await sendTelegramMessage(adminChatId, message);
+  // Send to all admins in parallel
+  const results = await Promise.allSettled(
+    adminIds.map(id => sendTelegramMessage(id, message))
+  );
+
+  // Log any failures
+  results.forEach((result, index) => {
+    if (result.status === 'rejected') {
+      logger.error({ chatId: adminIds[index], error: result.reason }, 'Failed to send to admin');
+    }
+  });
+
+  const successCount = results.filter(r => r.status === 'fulfilled').length;
+  logger.info({ total: adminIds.length, success: successCount }, 'Notification sent to admins');
+}
+
+/**
+ * Escape Markdown special characters
+ * Characters to escape: _ * [ ] ( ) ~ ` > # + - = | { } . !
+ */
+function escapeMarkdown(text: string): string {
+  if (!text) return '';
+  return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+}
+
+/**
+ * Send escalation notification to admin
+ */
+async function sendEscalationNotification(data: EscalationInfo): Promise<void> {
+  // Format WhatsApp Link
+  let phone = data.userId.replace(/@.*/, '');
+  if (phone.startsWith('0')) phone = '62' + phone.substring(1);
+  const waLink = `https://wa.me/${phone}`;
+
+  // Map reasons to human readable text
+  let humanReason = data.reason || 'Manual Escalation';
+  if (humanReason === 'max_warnings') humanReason = 'Salah Input 3x';
+  if (humanReason === 'post_form_contact') humanReason = 'Tanya Setelah Form';
+  if (humanReason === 'partnership_followup') humanReason = 'Follow-up Partnership';
+
+  // Map state to human readable text
+  let humanState = data.currentState as string;
+  if (humanState === 'CHOOSE_OPTION') humanState = 'Pilih Opsi';
+  if (humanState === 'FORM_IN_PROGRESS') humanState = 'Sedang Isi Form';
+  if (humanState === 'FORM_SENT') humanState = 'Form Terkirim';
+  if (humanState === 'FORM_COMPLETED') humanState = 'Form Selesai';
+  if (humanState === 'MANUAL_INTERVENTION') humanState = 'Butuh Admin';
+
+  // Escape dynamic data
+  const reason = escapeMarkdown(humanReason);
+  const userId = escapeMarkdown(data.userId.replace('@s.whatsapp.net', ''));
+  const lastMessage = escapeMarkdown(data.lastMessage || '-');
+  const state = escapeMarkdown(humanState);
+
+  const message = `🚨 *BUTUH RESPON MANUAL* (Escalation)
+
+*Alasan:* ${reason}
+*User:* \`${userId}\`
+*Status:* ${state}
+*Warning:* ${data.warningCount}
+📅 Waktu: ${escapeMarkdown(new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }))}
+
+📱 Chat: [Klik untuk Chat](${waLink})
+
+*Pesan Terakhir:*
+${lastMessage}`;
+
+  await sendToAllAdmins(message);
 
   logger.info({ userId: data.userId }, 'Escalation notification sent to admin');
 }
@@ -56,29 +133,15 @@ async function sendEscalationNotification(data: EscalationInfo): Promise<void> {
  * Send new lead notification
  */
 async function sendNewLeadNotification(data: { leadId: string; userId: string }): Promise<void> {
-  const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
-
-  if (!adminChatId) {
-    return;
-  }
-
-  const message = `📥 *New Lead*\n\nLead ID: \`${data.leadId}\`\nUser ID: \`${data.userId}\``;
-  await sendTelegramMessage(adminChatId, message);
+  const userId = data.userId.replace('@s.whatsapp.net', '');
+  const message = `📥 *Lead Baru Masuk*\n\nUser: \`${escapeMarkdown(userId)}\``;
+  await sendToAllAdmins(message);
 }
 
 /**
  * Send form completed notification
  */
-/**
- * Send form completed notification
- */
 async function sendFormCompletedNotification(data: { leadId: string; userId: string; formData?: any }): Promise<void> {
-  const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
-
-  if (!adminChatId) {
-    return;
-  }
-
   // Format Date: "Senin, 13 Januari 2026 10:30 WIB"
   const now = new Date();
   const dateStr = now.toLocaleDateString('id-ID', {
@@ -106,44 +169,41 @@ async function sendFormCompletedNotification(data: { leadId: string; userId: str
     if (fd.start_plan) dataFields += `- Mulai: ${fd.start_plan}\n`;
   }
 
-  const message = `✅ *Form Completed*
-📅 ${dateTime}
+  const message = `✅ *Form Data Masuk*
+📅 ${escapeMarkdown(dateTime)}
 
-👤 ${data.formData?.biodata || '-'}
+👤 ${escapeMarkdown(data.formData?.biodata || '-')}
 📱 ${waLink}
 
 📝 *Data Lead:*
-${dataFields}
-ID: \`${data.leadId}\``;
+${escapeMarkdown(dataFields)}
+ID: \`${escapeMarkdown(data.leadId)}\``;
 
-  await sendTelegramMessage(adminChatId, message);
+  await sendToAllAdmins(message);
 }
 
 /**
  * Send special notification (Opt 2, 3, 4)
  */
 async function sendSpecialNotification(header: string, data: EscalationInfo): Promise<void> {
-  const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
-
-  if (!adminChatId) {
-    return;
-  }
-
   // Format WhatsApp Link
   let phone = data.userId.replace(/@.*/, '');
   if (phone.startsWith('0')) phone = '62' + phone.substring(1);
   const waLink = `https://wa.me/${phone}`;
 
+  const userId = escapeMarkdown(data.userId.replace('@s.whatsapp.net', ''));
+  const lastMessage = escapeMarkdown(data.lastMessage || '-');
+
   const message = `${header}
 
-👤 User: \`${data.userId}\`
+👤 User: \`${userId}\`
 📱 Chat: [Klik untuk Chat](${waLink})
-📅 Time: ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}
+📅 Waktu: ${escapeMarkdown(new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }))}
 
-💬 *Last Message:*
-"${data.lastMessage || '-'}"`;
+💬 *Pesan Terakhir:*
+"${lastMessage}"`;
 
-  await sendTelegramMessage(adminChatId, message);
+  await sendToAllAdmins(message);
 }
 
 /**
@@ -169,15 +229,15 @@ export async function telegramWorkerProcessor(job: Job<TelegramNotifyJobData>): 
         break;
 
       case 'partnership_interest':
-        await sendSpecialNotification('🤝 *PARTNERSHIP INTEREST*', data as EscalationInfo);
+        await sendSpecialNotification('🤝 *MINAT JADI FRANCHISOR*', data as EscalationInfo);
         break;
 
       case 'general_inquiry':
-        await sendSpecialNotification('❓ *GENERAL INQUIRY*', data as EscalationInfo);
+        await sendSpecialNotification('❓ *PERTANYAAN UMUM*', data as EscalationInfo);
         break;
 
       case 'other_needs':
-        await sendSpecialNotification('📢 *OTHER NEEDS / COOPERATION*', data as EscalationInfo);
+        await sendSpecialNotification('📢 *KEPERLUAN LAIN / KERJA SAMA*', data as EscalationInfo);
         break;
 
       default:

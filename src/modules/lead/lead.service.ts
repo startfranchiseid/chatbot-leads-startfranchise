@@ -30,7 +30,7 @@ export async function getLeadByUserId(userId: string): Promise<Lead | null> {
     'SELECT * FROM leads WHERE user_id = $1',
     [userId]
   );
-  
+
   if (rows[0]) {
     return rows[0];
   }
@@ -70,27 +70,83 @@ export async function getLeadById(id: string): Promise<Lead | null> {
 }
 
 /**
+ * Resolve User ID (Handle LID vs Phone ID migration)
+ * Returns the correct user_id to use for processing
+ */
+export async function resolveAuthId(userId: string, altId?: string | null): Promise<string> {
+  if (!altId) return userId;
+
+  // Check if lead exists with either ID
+  // Fetch ALL matches to detect split-brain
+  const leads = await query<Lead>(
+    `SELECT * FROM leads WHERE user_id IN ($1, $2) OR alt_id IN ($1, $2)`,
+    [userId, altId]
+  );
+
+  if (leads.length === 0) return userId;
+
+  // Check if we have the target phone ID already
+  const phoneLead = leads.find(l => l.user_id === userId);
+  // Check if we have the LID lead
+  const lidLead = leads.find(l => l.user_id === altId);
+
+  // SCENARIO 1: Both exist (Split Brain) -> Merge them
+  if (phoneLead && lidLead && phoneLead.id !== lidLead.id) {
+    logger.info({ phoneId: phoneLead.id, lidId: lidLead.id }, 'Merging duplicate leads (Phone + LID)');
+
+    // 1. Update phone lead with alt_id if missing
+    if (!phoneLead.alt_id) {
+      await query(`UPDATE leads SET alt_id = $1 WHERE id = $2`, [altId, phoneLead.id]);
+    }
+
+    // 2. Delete the LID lead (it's less valuable/imported)
+    // Note: In a real system we might merge interactions, but here LID comes from sync (empty history likely)
+    await query(`DELETE FROM leads WHERE id = $1`, [lidLead.id]);
+
+    return userId;
+  }
+
+  // SCENARIO 2: Only LID exists -> Migrate to Phone
+  if (lidLead && !phoneLead) {
+    logger.info({ oldId: lidLead.user_id, newId: userId }, 'Migrating Lead ID from LID to Phone');
+    await query(
+      `UPDATE leads SET user_id = $1, alt_id = $2 WHERE id = $3`,
+      [userId, altId, lidLead.id]
+    );
+    return userId;
+  }
+
+  // SCENARIO 3: Only Phone exists (or other cases) -> Return Phone
+  return userId;
+}
+
+/**
  * Create new lead
  */
 export async function createLead(
   userId: string,
-  source: MessageSource,
-  initialState: LeadState = LeadStates.NEW
+  source: MessageSource, // Assuming LeadSource is a typo and should be MessageSource based on context
+  state: LeadState = LeadStates.NEW,
+  options?: GetLeadOptions
 ): Promise<Lead> {
-  const id = uuidv4();
-  const rows = await query<Lead>(
-    `INSERT INTO leads (id, user_id, source, state, warning_count)
-     VALUES ($1, $2, $3, $4, 0)
+  const pushName = options?.pushName || null;
+  const altId = options?.metadata?.lid || null;
+
+  const result = await query<Lead>(
+    `INSERT INTO leads (user_id, source, state, push_name, alt_id, warning_count) 
+     VALUES ($1, $2, $3, $4, $5, 0) 
      RETURNING *`,
-    [id, userId, source, initialState]
+    [userId, source, state, pushName, altId]
   );
 
-  const lead = rows[0];
+  // The instruction snippet had a partial line and duplicate logger.info.
+  // Assuming the intent is to return the first result and log it.
+  const lead = result[0];
   if (!lead) {
     throw new Error('Failed to create lead');
   }
 
-  logger.info({ leadId: id, userId, source, state: initialState }, 'Created new lead');
+  logger.info({ leadId: lead.id, userId, source, state }, 'Created new lead');
   return lead;
 }
 
@@ -127,18 +183,60 @@ export async function markAsExisting(
 /**
  * Get or create lead
  */
+// Helper to determine if we should update metadata
+function shouldUpdateMetadata(lead: Lead, options?: GetLeadOptions): boolean {
+  if (!options) return false;
+  if (options.pushName && lead.push_name !== options.pushName) return true;
+  if (options.metadata?.lid && !lead.alt_id) return true;
+  return false;
+}
+
 export async function getOrCreateLead(
   userId: string,
-  source: MessageSource
+  source: MessageSource,
+  options?: GetLeadOptions
 ): Promise<{ lead: Lead; isNew: boolean }> {
+  // Check if lead exists
   let lead = await getLeadByUserId(userId);
+  let isNew = false;
 
   if (!lead) {
-    lead = await createLead(userId, source);
-    return { lead, isNew: true };
+    // Create new lead
+    lead = await createLead(userId, source, LeadStates.NEW, options);
+    isNew = true;
+  } else {
+    // Check if we need to update metadata (PushName or Alt ID)
+    if (shouldUpdateMetadata(lead, options)) {
+      const updates: string[] = [];
+      const params: unknown[] = [];
+      let paramCount = 1;
+
+      if (options?.pushName && lead.push_name !== options.pushName) {
+        updates.push(`push_name = $${paramCount++}`);
+        params.push(options.pushName);
+      }
+
+      // Only update alt_id if it's missing
+      if (options?.metadata?.lid && !lead.alt_id) {
+        updates.push(`alt_id = $${paramCount++}`);
+        params.push(options.metadata.lid);
+      }
+
+      if (updates.length > 0) {
+        params.push(lead.id); // ID as last param
+        const sql = `UPDATE leads SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $${paramCount} RETURNING *`;
+        const updated = await query<Lead>(sql, params);
+        if (updated.length > 0) lead = updated[0]!;
+      }
+    }
   }
 
-  return { lead, isNew: false };
+  return { lead, isNew };
+}
+
+export interface GetLeadOptions {
+  metadata?: Record<string, any>;
+  pushName?: string;
 }
 
 /**

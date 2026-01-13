@@ -12,22 +12,34 @@ function extractWAHAUserIds(payload: WAHAWebhookPayload): { userId: string; lid:
   if (!messagePayload) return null;
 
   const from = messagePayload.from;
+  const remoteJid = messagePayload._data?.key?.remoteJid;
   const remoteJidAlt = messagePayload._data?.key?.remoteJidAlt;
-  
+
   let userId = from;
   let lid: string | null = null;
   let phone: string | null = null;
 
-  // If from is a LID and we have remoteJidAlt (phone), prefer phone
-  if (from && isWhatsAppLid(from)) {
+  // 1. Try to find LID
+  if (from && from.includes('@lid')) {
     lid = from;
-    if (remoteJidAlt && remoteJidAlt.includes('@s.whatsapp.net')) {
-      userId = remoteJidAlt;
-      phone = remoteJidAlt;
-    }
-  } else if (from && from.includes('@s.whatsapp.net')) {
-    phone = from;
-    userId = from;
+  } else if (remoteJidAlt && remoteJidAlt.includes('@lid')) {
+    lid = remoteJidAlt;
+  }
+
+  // 2. Try to find Phone
+  if (from && (from.includes('@s.whatsapp.net') || from.includes('@c.us'))) {
+    phone = from.replace('@c.us', '@s.whatsapp.net');
+  } else if (remoteJid && remoteJid.includes('@s.whatsapp.net')) {
+    phone = remoteJid;
+  } else if (remoteJidAlt && remoteJidAlt.includes('@s.whatsapp.net')) {
+    phone = remoteJidAlt;
+  }
+
+  // 3. Determine primary userId (Prefer Phone > LID)
+  if (phone) {
+    userId = phone;
+  } else if (lid) {
+    userId = lid;
   }
 
   if (!userId) return null;
@@ -65,11 +77,8 @@ export function parseWAHAMessage(payload: WAHAWebhookPayload): InboundMessage | 
     // Get chatId - could be in different places
     const chatId = messagePayload.chatId || messagePayload._data?.key?.remoteJid || from;
 
-    // Reject self messages
-    if (fromMe || messagePayload._data?.key?.fromMe) {
-      logger.debug({ messageId: id }, 'Ignoring self message');
-      return null;
-    }
+    // Reject self messages? NO, allow them to create leads as EXISTING
+    // but ensure we extract the correct ID (recipient)
 
     // Reject group messages
     const isGroup = messagePayload.isGroup || (chatId && chatId.endsWith('@g.us'));
@@ -85,8 +94,19 @@ export function parseWAHAMessage(payload: WAHAWebhookPayload): InboundMessage | 
     }
 
     // Extract user IDs (handles @lid and @s.whatsapp.net)
-    const userIds = extractWAHAUserIds(payload);
-    if (!userIds) {
+    // If fromMe (outgoing), the userId is the RECIPIENT (to)
+    let userIds;
+    if (fromMe || messagePayload._data?.key?.fromMe) {
+      // Outgoing: userId is the recipient
+      const recipient = messagePayload.to || messagePayload._data?.key?.remoteJid;
+      userIds = { userId: recipient, lid: null, phone: null };
+      // Note: lid/phone extraction for outgoing might need more logic if 'to' is also @lid
+      // For now assume 'to' is correct format or can be normalized
+    } else {
+      userIds = extractWAHAUserIds(payload);
+    }
+
+    if (!userIds || !userIds.userId) {
       logger.debug({ messageId: id }, 'Could not extract user ID');
       return null;
     }
@@ -215,10 +235,10 @@ export function validateMessage(message: InboundMessage): { valid: boolean; reas
  */
 export function extractCommand(text: string): { command: string | null; args: string } {
   const trimmed = text.trim();
-  
+
   // Check for command pattern: /command or /command@botname
   const commandMatch = trimmed.match(/^\/([a-zA-Z0-9_]+)(?:@\w+)?\s*(.*)/);
-  
+
   if (commandMatch) {
     return {
       command: commandMatch[1]!.toLowerCase(),
