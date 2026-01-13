@@ -1,8 +1,6 @@
 import useSWR from 'swr';
 import { Users, AlertCircle, CheckCircle, Smartphone, Clock, Database, TrendingUp, Bell, ArrowUpRight, Loader2 } from 'lucide-react';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-const fetcher = (url: string) => fetch(url).then(res => res.json());
+import { API_BASE, fetcher } from '@/lib/api';
 
 export default function DashboardPage() {
     const { data: analytics, isLoading: loadingAnalytics } = useSWR(`${API_BASE}/api/admin/analytics`, fetcher, { refreshInterval: 5000 });

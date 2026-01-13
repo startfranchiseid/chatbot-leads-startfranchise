@@ -3,9 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { cn } from '@/lib/utils';
 import { Trash2, Edit, RefreshCw, DownloadCloud, Plus, Search, ChevronLeft, ChevronRight, X, AlertTriangle } from 'lucide-react';
 import { useState, useEffect } from 'react';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-const fetcher = (url: string) => fetch(`${API_BASE}${url}`).then(res => res.json());
+import { API_BASE, fetcher } from '@/lib/api';
 
 // Debounce hook
 function useDebounce<T>(value: T, delay: number): T {

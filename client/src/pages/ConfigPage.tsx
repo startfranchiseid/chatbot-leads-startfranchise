@@ -1,9 +1,7 @@
 import useSWR from 'swr';
 import { useState, useEffect } from 'react';
 import { Save, Settings, Database, ServerCog, MessageSquare, Zap, Shield, Loader2, CheckCircle, XCircle, Eye, EyeOff } from 'lucide-react';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-const fetcher = (url: string) => fetch(url).then(res => res.json());
+import { API_BASE, fetcher } from '@/lib/api';
 
 // Group configuration by category
 const CONFIG_GROUPS = {

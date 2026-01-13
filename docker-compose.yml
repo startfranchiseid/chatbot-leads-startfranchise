@@ -1,7 +1,9 @@
 version: '3.8'
 
 services:
-  # Main Application
+  # ============================================
+  # Backend API
+  # ============================================
   app:
     build:
       context: .
@@ -9,36 +11,42 @@ services:
     container_name: chatbot-leads-api
     restart: unless-stopped
     ports:
-      - "${PORT:-3000}:3000"
+      - "3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - DATABASE_URL=postgresql://chatbot:${DB_PASSWORD:-chatbot123}@postgres:5432/chatbot_leads
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      # WAHA Settings (configure these)
+      # PostgreSQL (external - already on VPS)
+      - DATABASE_URL=${DATABASE_URL}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      # Redis (external - already on VPS)
+      - REDIS_URL=${REDIS_URL}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      # WAHA
       - WAHA_API_URL=${WAHA_API_URL}
       - WAHA_API_KEY=${WAHA_API_KEY}
-      - WAHA_SESSION_NAME=${WAHA_SESSION_NAME:-default}
-      # Google Sheets (configure these)
+      - WAHA_SESSION_NAME=${WAHA_SESSION_NAME}
+      - WAHA_WEBHOOK_PATH=${WAHA_WEBHOOK_PATH}
+      # Google Sheets
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - GOOGLE_REFRESH_TOKEN=${GOOGLE_REFRESH_TOKEN}
       - GOOGLE_SPREADSHEET_ID=${GOOGLE_SPREADSHEET_ID}
-      - GOOGLE_SHEET_NAME=${GOOGLE_SHEET_NAME:-Leads}
-      # Telegram (optional)
+      - GOOGLE_SHEET_NAME=${GOOGLE_SHEET_NAME}
+      # Telegram
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_ADMIN_CHAT_ID=${TELEGRAM_ADMIN_CHAT_ID}
-      # Rate limiting
+      # Rate Limiting
       - RATE_LIMIT_MAX=${RATE_LIMIT_MAX:-100}
       - RATE_LIMIT_WINDOW_MS=${RATE_LIMIT_WINDOW_MS:-60000}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - chatbot-network
+      - LOCK_TTL_SECONDS=${LOCK_TTL_SECONDS:-10}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
       interval: 30s
@@ -46,45 +54,18 @@ services:
       retries: 3
       start_period: 10s
 
-  # PostgreSQL Database
-  postgres:
-    image: postgres:15-alpine
-    container_name: chatbot-leads-postgres
+  # ============================================
+  # Frontend Admin Dashboard
+  # ============================================
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: chatbot-leads-frontend
     restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - app
     environment:
-      - POSTGRES_USER=chatbot
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-chatbot123}
-      - POSTGRES_DB=chatbot_leads
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - chatbot-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U chatbot -d chatbot_leads"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Redis
-  redis:
-    image: redis:7-alpine
-    container_name: chatbot-leads-redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
-    networks:
-      - chatbot-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-volumes:
-  postgres_data:
-  redis_data:
-
-networks:
-  chatbot-network:
-    driver: bridge
+      - VITE_API_URL=http://app:3000

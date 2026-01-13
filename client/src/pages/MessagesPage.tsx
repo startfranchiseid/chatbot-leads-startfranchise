@@ -1,9 +1,7 @@
 import { useState, useEffect } from 'react';
 import { MessageSquare, Save, Eye, Loader2 } from 'lucide-react';
 import useSWR, { mutate } from 'swr';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-const fetcher = (url: string) => fetch(url).then(res => res.json());
+import { API_BASE, fetcher } from '@/lib/api';
 
 interface BotMessage {
     key: string;
@@ -102,8 +100,8 @@ export default function MessagesPage() {
                                 key={msg.key}
                                 onClick={() => setSelectedKey(msg.key)}
                                 className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${selectedKey === msg.key
-                                        ? 'bg-primary text-primary-foreground'
-                                        : 'hover:bg-muted'
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'hover:bg-muted'
                                     }`}
                             >
                                 <div className="font-medium">{msg.key}</div>
