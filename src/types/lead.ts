@@ -166,6 +166,7 @@ export interface MessageHandlerResult {
   success: boolean;
   shouldReply: boolean;
   replyMessage?: string;
+  secondaryMessage?: string;
   error?: string;
 }
 

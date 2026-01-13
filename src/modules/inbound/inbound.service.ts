@@ -9,6 +9,7 @@ export interface InboundServiceResult {
   success: boolean;
   shouldReply: boolean;
   replyMessage?: string;
+  secondaryMessage?: string;
   error?: string;
 }
 
@@ -101,7 +102,7 @@ export async function processOutgoingWebhook(
     }
 
     // Get the recipient
-    const rawRecipient = 
+    const rawRecipient =
       payload.payload?.to ||
       payload.payload?._data?.key?.remoteJid ||
       payload.payload?.from;
@@ -112,7 +113,7 @@ export async function processOutgoingWebhook(
 
     // Normalize user ID
     const userId = normalizeUserId(rawRecipient, 'whatsapp');
-    
+
     // Skip group chats
     if (userId.includes('@g.us')) {
       return { success: true };

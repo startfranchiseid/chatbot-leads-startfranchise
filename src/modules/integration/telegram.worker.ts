@@ -69,14 +69,80 @@ async function sendNewLeadNotification(data: { leadId: string; userId: string })
 /**
  * Send form completed notification
  */
-async function sendFormCompletedNotification(data: { leadId: string; userId: string }): Promise<void> {
+/**
+ * Send form completed notification
+ */
+async function sendFormCompletedNotification(data: { leadId: string; userId: string; formData?: any }): Promise<void> {
   const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
 
   if (!adminChatId) {
     return;
   }
 
-  const message = `✅ *Form Completed*\n\nLead ID: \`${data.leadId}\`\nUser ID: \`${data.userId}\`\n\nData has been synced to Google Sheets.`;
+  // Format Date: "Senin, 13 Januari 2026 10:30 WIB"
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('id-ID', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+  const timeStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+  const dateTime = `${dateStr} ${timeStr}`;
+
+  // Format WhatsApp Link
+  let phone = data.userId.replace(/@.*/, '');
+  if (phone.startsWith('0')) phone = '62' + phone.substring(1);
+  const waLink = `wa.me/${phone}`;
+
+  // Format Data Fields
+  let dataFields = '';
+  if (data.formData) {
+    const fd = data.formData;
+    if (fd.biodata) dataFields += `- Nama & Domisili: ${fd.biodata}\n`;
+    if (fd.source_info) dataFields += `- Sumber: ${fd.source_info}\n`;
+    if (fd.business_type) dataFields += `- Bisnis: ${fd.business_type}\n`;
+    if (fd.budget) dataFields += `- Budget: ${fd.budget}\n`;
+    if (fd.start_plan) dataFields += `- Mulai: ${fd.start_plan}\n`;
+  }
+
+  const message = `✅ *Form Completed*
+📅 ${dateTime}
+
+👤 ${data.formData?.biodata || '-'}
+📱 ${waLink}
+
+📝 *Data Lead:*
+${dataFields}
+ID: \`${data.leadId}\``;
+
+  await sendTelegramMessage(adminChatId, message);
+}
+
+/**
+ * Send special notification (Opt 2, 3, 4)
+ */
+async function sendSpecialNotification(header: string, data: EscalationInfo): Promise<void> {
+  const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+
+  if (!adminChatId) {
+    return;
+  }
+
+  // Format WhatsApp Link
+  let phone = data.userId.replace(/@.*/, '');
+  if (phone.startsWith('0')) phone = '62' + phone.substring(1);
+  const waLink = `https://wa.me/${phone}`;
+
+  const message = `${header}
+
+👤 User: \`${data.userId}\`
+📱 Chat: [Klik untuk Chat](${waLink})
+📅 Time: ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}
+
+💬 *Last Message:*
+"${data.lastMessage || '-'}"`;
+
   await sendTelegramMessage(adminChatId, message);
 }
 
@@ -99,7 +165,19 @@ export async function telegramWorkerProcessor(job: Job<TelegramNotifyJobData>): 
         break;
 
       case 'form_completed':
-        await sendFormCompletedNotification(data as { leadId: string; userId: string });
+        await sendFormCompletedNotification(data as { leadId: string; userId: string; formData?: any });
+        break;
+
+      case 'partnership_interest':
+        await sendSpecialNotification('🤝 *PARTNERSHIP INTEREST*', data as EscalationInfo);
+        break;
+
+      case 'general_inquiry':
+        await sendSpecialNotification('❓ *GENERAL INQUIRY*', data as EscalationInfo);
+        break;
+
+      case 'other_needs':
+        await sendSpecialNotification('📢 *OTHER NEEDS / COOPERATION*', data as EscalationInfo);
         break;
 
       default:

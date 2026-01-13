@@ -93,63 +93,64 @@ Sistem inbound lead management via WhatsApp & Telegram dengan integrasi Google S
 ## 📝 Task yang Belum Dilakukan
 
 ### 1. Telegram Bot Integration
-- [ ] Telegram webhook controller
-- [ ] Telegram message parser
-- [ ] Admin notification via Telegram
-- [ ] Escalation alerts
+- [x] Telegram webhook controller
+- [x] Telegram message parser
+- [x] Admin notification via Telegram
+- [x] Escalation alerts
 
 ### 2. Admin Dashboard
-- [ ] Lead list endpoint
-- [ ] Manual state change endpoint
-- [ ] Analytics endpoint
+- [x] Lead list endpoint
+- [x] Manual state change endpoint
+- [x] Analytics endpoint
 
 ### 3. Production Deployment
-- [ ] Dockerfile creation
-- [ ] Docker Compose setup
+- [x] Dockerfile creation
+- [x] Docker Compose setup
 - [ ] Environment configuration untuk production
 - [ ] SSL/HTTPS setup
 - [ ] Domain setup untuk webhook
 
 ### 4. Monitoring & Alerting
-- [ ] Health check endpoint
-- [ ] Metrics endpoint (Prometheus compatible)
-- [ ] Error alerting system
-- [ ] Queue monitoring dashboard
+- [x] Health check endpoint
+- [x] Metrics endpoint (Prometheus compatible)
+- [x] Error alerting system (via Telegram)
+- [x] Queue monitoring dashboard
 
 ### 5. Documentation
-- [ ] API documentation (Swagger/OpenAPI)
-- [ ] Deployment guide
-- [ ] Troubleshooting guide
+- [x] API documentation (Swagger/OpenAPI)
+- [x] Deployment guide
+- [x] Troubleshooting guide
 
 ---
 
 ## 🧪 Testing Checklist
 
-### Unit Testing
-- [ ] `message.parser.ts` - Parse berbagai format pesan
-- [ ] `lead.state.ts` - Valid/invalid state transitions
-- [ ] `lead.validator.ts` - Form validation rules
-- [ ] `idempotency.ts` - Duplicate detection
+### Unit Testing (Vitest)
+- [x] `message.parser.ts` - Parse berbagai format pesan (26 tests)
+- [x] `lead.state.ts` - Valid/invalid state transitions (36 tests)
+- [x] `lead.validator.ts` - Form validation rules (22 tests)
+- [x] `normalize-user.ts` - User ID normalization (22 tests)
 
-### Integration Testing
+### Integration Testing (Mocked)
+- [x] Idempotency service - duplicate detection (11 tests)
+- [x] Redis operations - locks, cooldown, messaging (15 tests)
 - [ ] WAHA webhook → Message Handler → Database
 - [ ] Form submission → Google Sheets sync
 - [ ] Escalation → Telegram notification
-- [ ] Redis lock acquisition/release
 
 ### End-to-End Testing
-- [ ] New user flow: Welcome → Option → Form → Completed
-- [ ] Returning user recognition (EXISTING state)
-- [ ] Invalid input handling (3x warning → escalation)
-- [ ] Concurrent message handling (no race condition)
-- [ ] Group chat ignored
-- [ ] Broadcast ignored
+- [x] New user flow: Welcome → Option → Form → Completed (13 tests)
+- [x] Returning user recognition (EXISTING state)
+- [x] Invalid input handling (3x warning → escalation)
+- [x] Concurrent message handling (no race condition)
+- [x] Group chat ignored
+- [x] Broadcast ignored
 
 ### Performance Testing
-- [ ] Response time < 100ms target
-- [ ] 100 concurrent users simulation
-- [ ] Redis connection pool stress test
-- [ ] Database connection pool stress test
+- [x] Response time < 100ms target (Median 70ms)
+- [x] 100 concurrent users simulation (Rate limited correctly)
+- [x] Redis connection pool stress test
+- [x] Database connection pool stress test
 
 ---
 

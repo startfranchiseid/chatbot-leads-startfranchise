@@ -58,18 +58,18 @@ function cleanPhoneNumber(userId: string): string {
     .replace(/@s\.whatsapp\.net$/i, '')
     .replace(/@c\.us$/i, '')
     .replace(/@lid$/i, '');
-  
+
   // If still has @, extract before @
   if (phone.includes('@')) {
-    phone = phone.split('@')[0];
+    phone = phone.split('@')[0] ?? phone;
   }
-  
+
   // Format Indonesian numbers nicely
   if (phone.startsWith('62')) {
     // Convert 628xxx to 08xxx for local format
     phone = '0' + phone.substring(2);
   }
-  
+
   return phone;
 }
 
@@ -78,21 +78,21 @@ function cleanPhoneNumber(userId: string): string {
  */
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return '';
-  
+
   // If it's already a readable format, return as-is
   if (!dateStr.includes('T') && !dateStr.includes('-')) {
     return dateStr;
   }
-  
+
   try {
     const date = new Date(dateStr);
     if (isNaN(date.getTime())) return dateStr;
-    
+
     // Format: "12 Januari 2026"
-    const options: Intl.DateTimeFormatOptions = { 
-      day: 'numeric', 
-      month: 'long', 
-      year: 'numeric' 
+    const options: Intl.DateTimeFormatOptions = {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
     };
     return date.toLocaleDateString('id-ID', options);
   } catch {
@@ -160,7 +160,7 @@ export async function initializeSheet(): Promise<void> {
     // Check if credentials are configured
     const hasOAuth = process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN;
     const hasServiceAccount = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY;
-    
+
     if (!hasOAuth && !hasServiceAccount) {
       logger.warn('Google Sheets credentials not configured - run: npx tsx scripts/setup-google-oauth.ts');
       return;

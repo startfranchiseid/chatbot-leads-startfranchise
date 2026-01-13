@@ -5,10 +5,11 @@ import { logger } from '../../infra/logger.js';
  * Form field patterns for parsing user input
  */
 const FIELD_PATTERNS = {
-  sourceInfo: /(?:sumber|source|dari mana|how did you|darimana)[\s:]*(.+)/i,
-  businessType: /(?:jenis bisnis|business type|tipe bisnis|type of business|bisnis apa)[\s:]*(.+)/i,
-  budget: /(?:budget|anggaran|modal|dana)[\s:]*(.+)/i,
-  startPlan: /(?:kapan|when|mulai|start|timeline|rencana mulai)[\s:]*(.+)/i,
+  biodata: /(?:nama|biodata|domisili)[^:\n]*:[ \t]*(.*)$/im,
+  sourceInfo: /(?:sumber|source|dari|info)[^:\n]*:[ \t]*(.*)$/im,
+  businessType: /(?:jenis bisnis|business type|tipe bisnis|type of business|bisnis)[^:\n]*:[ \t]*(.*)$/im,
+  budget: /(?:budget|anggaran|modal|dana)[^:\n]*:[ \t]*(.*)$/im,
+  startPlan: /(?:kapan|when|mulai|start|timeline|rencana)[^:\n]*:[ \t]*(.*)$/im,
 };
 
 /**
@@ -17,7 +18,7 @@ const FIELD_PATTERNS = {
 const FIELD_KEYWORDS = {
   sourceInfo: ['instagram', 'facebook', 'google', 'tiktok', 'youtube', 'referral', 'teman', 'iklan', 'ads', 'website', 'event'],
   businessType: ['fnb', 'f&b', 'retail', 'service', 'jasa', 'makanan', 'minuman', 'food', 'beverage', 'fashion', 'kuliner'],
-  budget: ['juta', 'million', 'rp', 'idr', 'rb', 'ribu', 'thousand', 'm', 'jt', 'milyar', 'billion'],
+  budget: ['juta', 'million', 'rp', 'idr', 'rb', 'ribu', 'thousand', 'jt', 'milyar', 'billion'], // Removed 'm' effectively
   startPlan: ['bulan', 'month', 'minggu', 'week', 'tahun', 'year', 'segera', 'asap', 'immediately', 'q1', 'q2', 'q3', 'q4'],
 };
 
@@ -28,18 +29,24 @@ export function parseFormData(message: string): Partial<LeadFormData> {
   const parsed: Partial<LeadFormData> = {};
   const normalizedMessage = message.toLowerCase();
 
-  // Try pattern matching first
+  // 1. Pattern matching (Strict line-based)
   for (const [field, pattern] of Object.entries(FIELD_PATTERNS)) {
     const match = message.match(pattern);
     if (match?.[1]) {
-      const fieldName = field as keyof typeof FIELD_PATTERNS;
-      (parsed as Record<string, string>)[fieldName === 'sourceInfo' ? 'source_info' : 
-        fieldName === 'businessType' ? 'business_type' : 
-        fieldName === 'startPlan' ? 'start_plan' : fieldName] = match[1].trim();
+      const value = match[1].trim();
+      if (value) {
+        const fieldName = field as keyof typeof FIELD_PATTERNS;
+        const targetKey = fieldName === 'sourceInfo' ? 'source_info' :
+          fieldName === 'businessType' ? 'business_type' :
+            fieldName === 'startPlan' ? 'start_plan' :
+              fieldName; // biodata, budget map directly
+
+        (parsed as any)[targetKey] = value;
+      }
     }
   }
 
-  // Keyword-based detection as fallback
+  // 2. Keyword-based detection (Fallback for missing fields only)
   if (!parsed.source_info) {
     for (const keyword of FIELD_KEYWORDS.sourceInfo) {
       if (normalizedMessage.includes(keyword)) {
@@ -90,20 +97,18 @@ export function validateFormData(
   const errors: string[] = [];
 
   // Required fields check
-  if (!mergedData.source_info) {
-    errors.push('Mohon informasikan dari mana Anda mengetahui kami (Instagram, Google, dll)');
-  }
+  const requiredFields: (keyof LeadFormData)[] = [
+    'biodata',
+    'source_info',
+    'business_type',
+    'budget',
+    'start_plan',
+  ];
 
-  if (!mergedData.business_type) {
-    errors.push('Mohon informasikan jenis bisnis yang Anda minati');
-  }
-
-  if (!mergedData.budget) {
-    errors.push('Mohon informasikan perkiraan budget/modal Anda');
-  }
-
-  if (!mergedData.start_plan) {
-    errors.push('Mohon informasikan rencana waktu memulai bisnis');
+  for (const field of requiredFields) {
+    if (!mergedData[field]) {
+      errors.push(field);
+    }
   }
 
   if (errors.length > 0) {
@@ -125,7 +130,7 @@ export function validateFormData(
  */
 export function isFormSubmission(message: string): boolean {
   const normalizedMessage = message.toLowerCase();
-  
+
   // Check if message contains any form-related keywords
   const allKeywords = [
     ...FIELD_KEYWORDS.sourceInfo,
@@ -134,7 +139,7 @@ export function isFormSubmission(message: string): boolean {
     ...FIELD_KEYWORDS.startPlan,
   ];
 
-  const keywordMatches = allKeywords.filter(keyword => 
+  const keywordMatches = allKeywords.filter(keyword =>
     normalizedMessage.includes(keyword)
   );
 
@@ -188,23 +193,27 @@ function extractBudget(text: string): string | undefined {
 }
 
 /**
- * Get missing fields message
+ * Get error message for missing fields
  */
 export function getMissingFieldsMessage(errors: string[]): string {
-  if (errors.length === 0) {
-    return '';
-  }
+  if (errors.length === 0) return '';
 
-  let message = '⚠️ Data belum lengkap. Mohon lengkapi informasi berikut:\n\n';
-  errors.forEach((error, index) => {
-    message += `${index + 1}. ${error}\n`;
-  });
-  
-  message += '\nContoh format:\n';
-  message += '- Sumber: Instagram\n';
-  message += '- Jenis bisnis: F&B / Kuliner\n';
-  message += '- Budget: 100 juta\n';
-  message += '- Rencana mulai: 3 bulan lagi';
+  const missingList = errors.map((field) => {
+    switch (field) {
+      case 'biodata':
+        return '- Nama & Domisili';
+      case 'source_info':
+        return '- Sumber informasi (Instagram/Google/dll)';
+      case 'business_type':
+        return '- Jenis bisnis (F&B/Retail/Jasa/dll)';
+      case 'budget':
+        return '- Budget/modal awal';
+      case 'start_plan':
+        return '- Rencana mulai (bulan/tahun)';
+      default:
+        return `- ${field}`;
+    }
+  }).join('\n');
 
-  return message;
+  return `Mohon lengkapi data berikut:\n\n${missingList}\n\nSilakan kirim ulang data yang belum lengkap.`;
 }

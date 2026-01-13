@@ -18,8 +18,8 @@ export interface SheetsSyncJobData {
 }
 
 export interface TelegramNotifyJobData {
-  type: 'escalation' | 'new_lead' | 'form_completed';
-  data: EscalationInfo | { leadId: string; userId: string };
+  type: 'escalation' | 'new_lead' | 'form_completed' | 'partnership_interest' | 'general_inquiry' | 'other_needs';
+  data: EscalationInfo | { leadId: string; userId: string; formData?: LeadFormData };
 }
 
 // Queues
@@ -172,4 +172,44 @@ export async function closeQueues(): Promise<void> {
 
   await Promise.all(closePromises);
   logger.info('All queues and workers closed');
+}
+
+/**
+ * Get queue statistics for monitoring dashboard
+ */
+export async function getQueueStats(): Promise<{
+  sheets: { waiting: number; active: number; completed: number; failed: number };
+  telegram: { waiting: number; active: number; completed: number; failed: number };
+}> {
+  const sheetsQueue = getSheetsSyncQueue();
+  const telegramQueue = getTelegramNotifyQueue();
+
+  const [sheetsWaiting, sheetsActive, sheetsCompleted, sheetsFailed] = await Promise.all([
+    sheetsQueue.getWaitingCount(),
+    sheetsQueue.getActiveCount(),
+    sheetsQueue.getCompletedCount(),
+    sheetsQueue.getFailedCount(),
+  ]);
+
+  const [telegramWaiting, telegramActive, telegramCompleted, telegramFailed] = await Promise.all([
+    telegramQueue.getWaitingCount(),
+    telegramQueue.getActiveCount(),
+    telegramQueue.getCompletedCount(),
+    telegramQueue.getFailedCount(),
+  ]);
+
+  return {
+    sheets: {
+      waiting: sheetsWaiting,
+      active: sheetsActive,
+      completed: sheetsCompleted,
+      failed: sheetsFailed,
+    },
+    telegram: {
+      waiting: telegramWaiting,
+      active: telegramActive,
+      completed: telegramCompleted,
+      failed: telegramFailed,
+    },
+  };
 }

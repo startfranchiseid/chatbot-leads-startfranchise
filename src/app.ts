@@ -5,6 +5,9 @@ import { initializeDatabase } from './infra/db.js';
 import { getRedis } from './infra/redis.js';
 import { wahaController } from './modules/inbound/waha.controller.js';
 import { telegramController } from './modules/inbound/telegram.controller.js';
+import { adminController } from './modules/admin/admin.controller.js';
+import { metricsController } from './modules/metrics/metrics.controller.js';
+import { docsController } from './modules/docs/docs.controller.js';
 import { initializeSheet } from './modules/integration/sheets.worker.js';
 import { startSyncJobs } from './jobs/sync-to-sheets.job.js';
 
@@ -33,8 +36,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.setErrorHandler((error, request, reply) => {
     logger.error({ error, url: request.url, method: request.method }, 'Request error');
 
-    const statusCode = error instanceof Error && 'statusCode' in error 
-      ? (error as { statusCode: number }).statusCode 
+    const statusCode = error instanceof Error && 'statusCode' in error
+      ? (error as { statusCode: number }).statusCode
       : 500;
     const errorName = error instanceof Error ? error.name : 'Internal Server Error';
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -101,6 +104,9 @@ export async function buildApp(): Promise<FastifyInstance> {
         ready: '/ready',
         waha: '/api/waha/webhook',
         telegram: '/api/telegram/webhook',
+        admin: '/api/admin/*',
+        metrics: '/metrics',
+        docs: '/api/docs',
       },
     };
   });
@@ -108,6 +114,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Register controllers
   await app.register(wahaController, { prefix: '/api/waha' });
   await app.register(telegramController, { prefix: '/api/telegram' });
+  await app.register(adminController, { prefix: '/api/admin' });
+  await app.register(metricsController, { prefix: '/metrics' });
+  await app.register(docsController, { prefix: '/api/docs' });
 
   return app;
 }

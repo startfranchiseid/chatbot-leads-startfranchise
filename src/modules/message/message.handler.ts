@@ -1,7 +1,7 @@
 import { PoolClient } from 'pg';
 import { withTransaction } from '../../infra/db.js';
-import { 
-  acquireLockWithRetry, 
+import {
+  acquireLockWithRetry,
   releaseLock,
   isUserInCooldown,
   setUserCooldown,
@@ -11,7 +11,10 @@ import {
   setPendingLock,
   isPendingLockActive,
 } from '../../infra/redis.js';
-import { addTelegramNotifyJob } from '../../infra/queue.js';
+import {
+  addTelegramNotifyJob,
+  addSheetsSyncJob
+} from '../../infra/queue.js';
 import { logger } from '../../infra/logger.js';
 import {
   InboundMessage,
@@ -45,55 +48,57 @@ const BOT_MESSAGES = {
 Kami membantu Anda menemukan peluang franchise terbaik.
 
 Silakan pilih:
-1️⃣ Saya ingin mencari franchise
-2️⃣ Saya ingin mendaftarkan bisnis sebagai franchisor
-3️⃣ Saya ingin bertanya tentang franchise`,
+1️⃣ Minat Franchise
+2️⃣ Daftar Sebagai Franchisor
+3️⃣ Keperluan lain / Kerja sama`,
 
-  CHOOSE_OPTION: `Terima kasih! Untuk melanjutkan, mohon isi data berikut:
+  CHOOSE_OPTION: `Terima kasih! Agar kami dapat membantu merekomendasikan franchise yang paling tepat untuk Anda, mohon lengkapi info singkat berikut:
+  
+📝 *Info Calon Mitra*
 
-📝 *Form Pendaftaran Lead*
+Silakan copy template di bawah ini, isi data Anda, lalu kirim kembali:`,
 
-Silakan kirim dalam format:
-- Sumber info: [Dari mana Anda tahu kami? Instagram/Google/dll]
-- Jenis bisnis: [F&B/Retail/Jasa/dll]
-- Budget: [Perkiraan modal Anda]
-- Rencana mulai: [Kapan rencana memulai?]
+  FORM_TEMPLATE: `Nama, Domisili: 
+Sumber info: 
+Jenis bisnis: 
+Budget: 
+Rencana mulai: `,
 
-Contoh:
-Sumber: Instagram
-Bisnis: F&B kuliner
-Budget: 100 juta
-Mulai: 3 bulan lagi`,
+  FORM_RECEIVED: `✅ Terima kasih! Data Anda sudah kami terima.
 
-  FORM_RECEIVED: `✅ Terima kasih! Data Anda sedang kami proses.
+Tim konsultan kami akan menganalisa kebutuhan Anda dan segera menghubungi Anda untuk memberikan rekomendasi franchise terbaik.
 
-Tim kami akan segera menghubungi Anda untuk konsultasi lebih lanjut.
-
-Jika ada pertanyaan, silakan chat langsung di sini.`,
+Jika ada pertanyaan tambahan, silakan chat langsung di sini.`,
 
   PARTNERSHIP: `Terima kasih atas minat Anda untuk mendaftarkan bisnis sebagai franchisor!
 
-Tim partnership kami akan segera menghubungi Anda.
+Tim partnership kami akan segera menghubungi Anda untuk diskusi lebih lanjut.
 
-Mohon tunggu konfirmasi dari tim kami dalam 1x24 jam.`,
+Mohon tunggu konfirmasi dari tim kami.`,
 
-  QUESTION_RECEIVED: `Terima kasih atas pertanyaannya! 
+  QUESTION_RECEIVED: `Terima kasih! 
 
-Tim kami akan segera merespons pertanyaan Anda.
+Tim kami akan segera merespons pesan Anda.
 
 Mohon tunggu, kami akan membalas secepatnya.`,
 
   INVALID_OPTION: `Maaf, pilihan tidak valid. Silakan pilih:
 
-1️⃣ Mencari franchise
-2️⃣ Mendaftarkan bisnis sebagai franchisor
-3️⃣ Bertanya tentang franchise`,
+1️⃣ Minat Franchise
+2️⃣ Daftar Sebagai Franchisor
+3️⃣ Keperluan lain / Kerja sama`,
 
   ESCALATION_NOTICE: `Terima kasih atas kesabaran Anda.
 
 Tim customer service kami akan segera menghubungi Anda secara langsung.
 
 Mohon tunggu, kami akan membantu Anda secepatnya.`,
+
+  OTHER_NEEDS: `Terima kasih! 
+
+Tim kami akan segera merespons pesan Anda.
+
+Mohon tunggu, kami akan membalas secepatnya.`,
 };
 
 /**
@@ -262,12 +267,13 @@ async function handleChooseOptionState(
       success: true,
       shouldReply: true,
       replyMessage: BOT_MESSAGES.CHOOSE_OPTION,
+      secondaryMessage: BOT_MESSAGES.FORM_TEMPLATE,
     };
   }
 
   if (trimmedText === '2') {
     // Want to register as franchisor
-    await updateLeadState(lead.id, LeadStates.PARTNERSHIP, client);
+    await handleSpecialOption(client, lead, message, 'partnership_interest');
     return {
       success: true,
       shouldReply: true,
@@ -276,12 +282,12 @@ async function handleChooseOptionState(
   }
 
   if (trimmedText === '3') {
-    // Has questions - escalate
-    await handleEscalation(client, lead, message, 'question');
+    // Other needs
+    await handleSpecialOption(client, lead, message, 'other_needs');
     return {
       success: true,
       shouldReply: true,
-      replyMessage: BOT_MESSAGES.QUESTION_RECEIVED,
+      replyMessage: BOT_MESSAGES.OTHER_NEEDS,
     };
   }
 
@@ -338,8 +344,26 @@ async function handleFormState(
     await updateLeadState(lead.id, LeadStates.FORM_COMPLETED, client);
 
     // Queue sync to Google Sheets (async)
-    // This happens outside the transaction
-    logger.info({ leadId: lead.id }, 'Form completed - queuing sync');
+    // We do this despite being in a transaction - Redis operations are fast
+    // and if DB fails, worst case we have a job that fails/retries
+    await addSheetsSyncJob({
+      leadId: lead.id,
+      userId: lead.user_id,
+      source: message.source,
+      formData: validation.parsedData as any, // validation.parsedData is complete merged data
+    });
+
+    // Notify Admin about completed form
+    await addTelegramNotifyJob({
+      type: 'form_completed',
+      data: {
+        leadId: lead.id,
+        userId: lead.user_id,
+        formData: validation.parsedData as any,
+      },
+    });
+
+    logger.info({ leadId: lead.id }, 'Form completed - sync job queued');
 
     return {
       success: true,
@@ -444,3 +468,41 @@ async function handleEscalation(
     'Lead escalated to manual intervention'
   );
 }
+
+/**
+ * Handle special options (2, 3, 4)
+ */
+async function handleSpecialOption(
+  client: PoolClient,
+  lead: Lead,
+  message: InboundMessage,
+  type: 'partnership_interest' | 'general_inquiry' | 'other_needs'
+): Promise<void> {
+  // Update state to MANUAL_INTERVENTION to stop bot
+  try {
+    await updateLeadState(lead.id, LeadStates.MANUAL_INTERVENTION, client);
+  } catch (error) {
+    logger.debug({ leadId: lead.id, error }, 'State transition failed during special option');
+  }
+
+  // Queue notification
+  const escalationInfo: EscalationInfo = {
+    userId: lead.user_id,
+    lastMessage: message.text,
+    currentState: lead.state,
+    warningCount: lead.warning_count,
+    source: message.source,
+    timestamp: new Date(),
+  };
+
+  await addTelegramNotifyJob({
+    type,
+    data: escalationInfo,
+  });
+
+  logger.info(
+    { leadId: lead.id, userId: lead.user_id, type },
+    'Lead selected special option'
+  );
+}
+

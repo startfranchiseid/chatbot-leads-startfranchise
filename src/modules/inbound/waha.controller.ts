@@ -7,25 +7,25 @@ import type { WAHAWebhookPayload } from '../../types/lead.js';
  * Check if chat is a group chat
  */
 function isGroupChat(payload: WAHAWebhookPayload): boolean {
-  const chatId = payload.payload?.chatId || 
-                 payload.payload?._data?.key?.remoteJid || 
-                 payload.payload?.from || '';
-  
+  const chatId = payload.payload?.chatId ||
+    payload.payload?._data?.key?.remoteJid ||
+    payload.payload?.from || '';
+
   // WhatsApp groups end with @g.us
   if (chatId.endsWith('@g.us')) {
     return true;
   }
-  
+
   // Check isGroup flag
   if (payload.payload?.isGroup) {
     return true;
   }
-  
+
   // Check if participant exists (indicates group message)
   if (payload.payload?._data?.key?.participant) {
     return true;
   }
-  
+
   return false;
 }
 
@@ -33,10 +33,10 @@ function isGroupChat(payload: WAHAWebhookPayload): boolean {
  * Check if message is broadcast/status
  */
 function isBroadcastOrStatus(payload: WAHAWebhookPayload): boolean {
-  const chatId = payload.payload?.chatId || 
-                 payload.payload?._data?.key?.remoteJid || 
-                 payload.payload?.from || '';
-  
+  const chatId = payload.payload?.chatId ||
+    payload.payload?._data?.key?.remoteJid ||
+    payload.payload?.from || '';
+
   return chatId.includes('@broadcast') || chatId.includes('status@');
 }
 
@@ -90,6 +90,7 @@ export async function wahaController(fastify: FastifyInstance): Promise<void> {
 
     try {
       const payload = request.body as WAHAWebhookPayload;
+      logger.info({ payload }, '📦 WAHA WEBHOOK RAW PAYLOAD');
 
       // Only process 'message' event, ignore 'message.any' to prevent double processing
       if (payload.event !== 'message') {
@@ -98,19 +99,19 @@ export async function wahaController(fastify: FastifyInstance): Promise<void> {
       }
 
       // ===== EARLY FILTERS - Before any processing =====
-      
+
       // 1. Ignore GROUP messages completely
       if (isGroupChat(payload)) {
-        logger.debug({ 
-          chatId: payload.payload?.chatId || payload.payload?.from 
+        logger.debug({
+          chatId: payload.payload?.chatId || payload.payload?.from
         }, 'Ignoring group message');
         return reply.status(200).send({ success: true, type: 'group_ignored' });
       }
 
       // 2. Ignore broadcast/status messages
       if (isBroadcastOrStatus(payload)) {
-        logger.debug({ 
-          chatId: payload.payload?.chatId || payload.payload?.from 
+        logger.debug({
+          chatId: payload.payload?.chatId || payload.payload?.from
         }, 'Ignoring broadcast/status message');
         return reply.status(200).send({ success: true, type: 'broadcast_ignored' });
       }
@@ -127,7 +128,7 @@ export async function wahaController(fastify: FastifyInstance): Promise<void> {
 
       // Check if this is an outgoing message (we sent it)
       const isOutgoing = payload.payload?.fromMe || payload.payload?._data?.key?.fromMe;
-      
+
       if (isOutgoing) {
         // When WE send a message to someone, mark them as EXISTING
         // So bot won't respond when they reply
@@ -142,11 +143,18 @@ export async function wahaController(fastify: FastifyInstance): Promise<void> {
       if (result.shouldReply && result.replyMessage && payload.payload?.from) {
         // Get the best chat ID for reply (prefer phone over LID)
         const replyTo = payload.payload._data?.key?.remoteJidAlt || payload.payload.from;
-        
+
         // Double-check: never send to group
         if (!replyTo.endsWith('@g.us')) {
           // Don't await - send async for faster response
-          sendWAHAReply(replyTo, result.replyMessage).catch((err) => {
+          sendWAHAReply(replyTo, result.replyMessage).then(async () => {
+            // Send secondary reply if exists (for copyable template)
+            if (result.secondaryMessage) {
+              // Small delay to ensure order
+              await new Promise(resolve => setTimeout(resolve, 500));
+              await sendWAHAReply(replyTo, result.secondaryMessage!);
+            }
+          }).catch((err) => {
             logger.error({ err }, 'Failed to send WAHA reply');
           });
         }
