@@ -164,6 +164,34 @@ export async function initializeDatabase(): Promise<void> {
       );
     `);
 
+    // Create waha_sessions table for multi-number management
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS waha_sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        session_name VARCHAR(100) UNIQUE NOT NULL,
+        phone_number VARCHAR(50),
+        waha_url VARCHAR(255) NOT NULL,
+        api_key VARCHAR(255) NOT NULL,
+        webhook_enabled BOOLEAN DEFAULT true,
+        is_active BOOLEAN DEFAULT true,
+        last_seen_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+
+    // Seed default WAHA session from env vars if table is empty
+    await client.query(`
+      INSERT INTO waha_sessions (session_name, waha_url, api_key, webhook_enabled, phone_number)
+      SELECT 
+        $1, $2, $3, true, NULL
+      WHERE NOT EXISTS (SELECT 1 FROM waha_sessions LIMIT 1);
+    `, [
+      process.env.WAHA_SESSION_NAME || 'default',
+      process.env.WAHA_API_URL || 'http://localhost:3001',
+      process.env.WAHA_API_KEY || ''
+    ]);
+
     logger.info('Database schema initialized successfully');
   } finally {
     client.release();

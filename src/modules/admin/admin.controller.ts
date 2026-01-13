@@ -700,4 +700,138 @@ export async function adminController(fastify: FastifyInstance): Promise<void> {
       return reply.status(500).send({ success: false, error: 'Failed to update message' });
     }
   });
+
+  // ===== WAHA Session Management =====
+
+  // Get all WAHA sessions
+  fastify.get('/waha/sessions', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { getAllSessions } = await import('../waha/session.service.js');
+      const sessions = await getAllSessions();
+      return reply.send({ success: true, data: sessions });
+    } catch (error) {
+      logger.error({ error }, 'Failed to get WAHA sessions');
+      return reply.status(500).send({ success: false, error: 'Failed to get sessions' });
+    }
+  });
+
+  // Create new WAHA session
+  fastify.post('/waha/sessions', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const input = request.body as {
+        session_name: string;
+        waha_url: string;
+        api_key: string;
+        phone_number?: string;
+        webhook_enabled?: boolean;
+      };
+
+      if (!input.session_name || !input.waha_url || !input.api_key) {
+        return reply.status(400).send({
+          success: false,
+          error: 'session_name, waha_url, and api_key are required'
+        });
+      }
+
+      const { createSession } = await import('../waha/session.service.js');
+      const session = await createSession(input);
+
+      logger.info({ sessionName: input.session_name }, 'Admin created WAHA session');
+      return reply.send({ success: true, data: session });
+    } catch (error) {
+      logger.error({ error }, 'Failed to create WAHA session');
+      return reply.status(500).send({ success: false, error: 'Failed to create session' });
+    }
+  });
+
+  // Update WAHA session
+  fastify.put('/waha/sessions/:name', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { name } = request.params as { name: string };
+      const input = request.body as {
+        waha_url?: string;
+        api_key?: string;
+        phone_number?: string;
+        webhook_enabled?: boolean;
+      };
+
+      const { updateSession } = await import('../waha/session.service.js');
+      const session = await updateSession(name, input);
+
+      if (!session) {
+        return reply.status(404).send({ success: false, error: 'Session not found' });
+      }
+
+      logger.info({ sessionName: name }, 'Admin updated WAHA session');
+      return reply.send({ success: true, data: session });
+    } catch (error) {
+      logger.error({ error }, 'Failed to update WAHA session');
+      return reply.status(500).send({ success: false, error: 'Failed to update session' });
+    }
+  });
+
+  // Delete WAHA session
+  fastify.delete('/waha/sessions/:name', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { name } = request.params as { name: string };
+
+      const { deleteSession } = await import('../waha/session.service.js');
+      const deleted = await deleteSession(name);
+
+      if (!deleted) {
+        return reply.status(404).send({ success: false, error: 'Session not found' });
+      }
+
+      logger.info({ sessionName: name }, 'Admin deleted WAHA session');
+      return reply.send({ success: true, message: 'Session deleted successfully' });
+    } catch (error) {
+      logger.error({ error }, 'Failed to delete WAHA session');
+      return reply.status(500).send({ success: false, error: 'Failed to delete session' });
+    }
+  });
+
+  // Toggle webhook on/off
+  fastify.post('/waha/sessions/:name/toggle', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { name } = request.params as { name: string };
+      const { enabled } = request.body as { enabled: boolean };
+
+      if (typeof enabled !== 'boolean') {
+        return reply.status(400).send({ success: false, error: 'enabled must be a boolean' });
+      }
+
+      const { toggleWebhook } = await import('../waha/session.service.js');
+      const session = await toggleWebhook(name, enabled);
+
+      if (!session) {
+        return reply.status(404).send({ success: false, error: 'Session not found' });
+      }
+
+      logger.info({ sessionName: name, enabled }, 'Admin toggled WAHA webhook');
+      return reply.send({ success: true, data: session });
+    } catch (error) {
+      logger.error({ error }, 'Failed to toggle webhook');
+      return reply.status(500).send({ success: false, error: 'Failed to toggle webhook' });
+    }
+  });
+
+  // Get session status from WAHA API
+  fastify.get('/waha/sessions/:name/status', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { name } = request.params as { name: string };
+
+      const { getSessionByName, getSessionStatus } = await import('../waha/session.service.js');
+      const session = await getSessionByName(name);
+
+      if (!session) {
+        return reply.status(404).send({ success: false, error: 'Session not found' });
+      }
+
+      const status = await getSessionStatus(session);
+      return reply.send({ success: true, data: status });
+    } catch (error) {
+      logger.error({ error }, 'Failed to get session status');
+      return reply.status(500).send({ success: false, error: 'Failed to get status' });
+    }
+  });
 }

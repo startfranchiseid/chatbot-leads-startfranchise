@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Users, Webhook, Settings, MessageSquare } from 'lucide-react';
+import { LayoutDashboard, Users, Webhook, Settings, MessageSquare, Smartphone } from 'lucide-react';
 import { cn } from '@/lib/utils';
 // Placeholder pages - will replace later
 import DashboardPage from './pages/DashboardPage';
@@ -7,6 +7,7 @@ import LeadsPage from './pages/LeadsPage';
 import WebhooksPage from './pages/WebhooksPage';
 import ConfigPage from './pages/ConfigPage';
 import MessagesPage from './pages/MessagesPage';
+import WAHASessionsPage from './pages/WAHASessionsPage';
 
 function NavItem({ to, icon: Icon, label }: { to: string; icon: any; label: string }) {
     const location = useLocation();
@@ -42,6 +43,7 @@ function Sidebar() {
             <div className="space-y-1">
                 <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />
                 <NavItem to="/leads" icon={Users} label="Leads Manager" />
+                <NavItem to="/waha" icon={Smartphone} label="WAHA Sessions" />
                 <NavItem to="/messages" icon={MessageSquare} label="Custom Messages" />
                 <NavItem to="/webhooks" icon={Webhook} label="Webhook History" />
                 <NavItem to="/config" icon={Settings} label="Configuration" />
@@ -59,6 +61,7 @@ function App() {
                     <Routes>
                         <Route path="/" element={<DashboardPage />} />
                         <Route path="/leads" element={<LeadsPage />} />
+                        <Route path="/waha" element={<WAHASessionsPage />} />
                         <Route path="/messages" element={<MessagesPage />} />
                         <Route path="/webhooks" element={<WebhooksPage />} />
                         <Route path="/config" element={<ConfigPage />} />

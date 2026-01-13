@@ -105,6 +105,27 @@ export async function wahaController(fastify: FastifyInstance): Promise<void> {
         // ignore
       }
 
+      // Check session webhook status
+      const sessionName = payload.session || 'default';
+      const { getSessionByName, updateSessionLastSeen } = await import('../waha/session.service.js');
+      const session = await getSessionByName(sessionName);
+
+      // Update last seen timestamp
+      if (session) {
+        updateSessionLastSeen(sessionName).catch(() => { });
+      }
+
+      // If session not found or webhook disabled, ignore
+      if (!session) {
+        logger.warn({ sessionName }, 'WAHA session not found in database');
+        return reply.status(200).send({ success: true, type: 'session_not_found' });
+      }
+
+      if (!session.webhook_enabled) {
+        logger.info({ sessionName }, 'WAHA webhook disabled for this session');
+        return reply.status(200).send({ success: true, type: 'webhook_disabled' });
+      }
+
       // Handle outgoing messages from message.any (when WE send first)
       // This must happen BEFORE we filter out non-message events
       if (payload.event === 'message.any') {
