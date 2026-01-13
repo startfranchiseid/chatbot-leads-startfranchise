@@ -20,9 +20,14 @@ export async function buildApp(): Promise<FastifyInstance> {
     bodyLimit: 1048576, // 1MB
   });
 
-  // Register CORS
+  // Register CORS - allow frontend origins
   await app.register(cors, {
-    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+    origin: [
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
+      'http://31.97.48.9:5173',
+      /\.startfranchise\.id$/,  // Allow all startfranchise.id subdomains
+    ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   });
 
