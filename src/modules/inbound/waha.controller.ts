@@ -42,7 +42,7 @@ function isBroadcastOrStatus(payload: WAHAWebhookPayload): boolean {
 }
 
 // Reply to WhatsApp via WAHA API
-async function sendWAHAReply(chatId: string, message: string): Promise<void> {
+async function sendWAHAReply(chatId: string, message: string, sessionName: string): Promise<void> {
   // NEVER send to groups
   if (chatId.endsWith('@g.us')) {
     logger.warn({ chatId }, 'Attempted to send to group - blocked');
@@ -50,10 +50,11 @@ async function sendWAHAReply(chatId: string, message: string): Promise<void> {
   }
 
   const wahaUrl = process.env.WAHA_API_URL || 'http://localhost:3001';
-  const sessionName = process.env.WAHA_SESSION_NAME || 'default';
   const apiKey = process.env.WAHA_API_KEY || '';
 
   try {
+    logger.debug({ wahaUrl, sessionName, chatId }, 'Sending WAHA reply');
+
     const response = await fetch(`${wahaUrl}/api/sendText`, {
       method: 'POST',
       headers: {
@@ -200,12 +201,12 @@ export async function wahaController(fastify: FastifyInstance): Promise<void> {
         // Double-check: never send to group
         if (!replyTo.endsWith('@g.us')) {
           // Don't await - send async for faster response
-          sendWAHAReply(replyTo, result.replyMessage).then(async () => {
+          sendWAHAReply(replyTo, result.replyMessage, sessionName).then(async () => {
             // Send secondary reply if exists (for copyable template)
             if (result.secondaryMessage) {
               // Small delay to ensure order
               await new Promise(resolve => setTimeout(resolve, 500));
-              await sendWAHAReply(replyTo, result.secondaryMessage!);
+              await sendWAHAReply(replyTo, result.secondaryMessage!, sessionName);
             }
           }).catch((err) => {
             logger.error({ err }, 'Failed to send WAHA reply');
