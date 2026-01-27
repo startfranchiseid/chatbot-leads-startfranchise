@@ -129,6 +129,15 @@ export async function initializeDatabase(): Promise<void> {
       END $$;
     `);
 
+    // Add push_name column if not exists
+    await client.query(`
+      DO $$ BEGIN
+        ALTER TABLE leads ADD COLUMN IF NOT EXISTS push_name TEXT;
+      EXCEPTION
+        WHEN duplicate_column THEN null;
+      END $$;
+    `);
+
     // Create lead_interactions table
     await client.query(`
       CREATE TABLE IF NOT EXISTS lead_interactions (
