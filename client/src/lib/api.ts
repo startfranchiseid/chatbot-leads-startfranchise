@@ -1,8 +1,8 @@
 // API Configuration
 // In production (Docker), nginx proxies /api to backend, so use relative URL
-// In development, use VITE_API_URL env var or fallback to localhost
+// In development, use VITE_API_URL env var or fallback to relative path (Vite proxy)
 const isProduction = import.meta.env.PROD;
-export const API_BASE = isProduction ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
+export const API_BASE = isProduction ? '' : (import.meta.env.VITE_API_URL || '');
 
 // Fetcher for SWR
 export const fetcher = (url: string) => fetch(`${API_BASE}${url}`).then(res => res.json());

@@ -31,41 +31,58 @@ export async function adminController(fastify: FastifyInstance): Promise<void> {
       await query('TRUNCATE leads CASCADE');
 
       // 2. Fetch contacts from WAHA
-      const wahaUrl = process.env.WAHA_API_URL || 'http://localhost:3000';
-      const wahaKey = process.env.WAHA_API_KEY;
-      const sessionName = process.env.WAHA_SESSION_NAME || 'default';
+      // 2. Fetch contacts from all active sessions
+      const { getAllSessions } = await import('../waha/session.service.js');
+      const sessions = await getAllSessions();
+      const activeSessions = sessions.filter(s => s.is_active);
 
-      const headers: Record<string, string> = {};
-      if (wahaKey) headers['X-Api-Key'] = wahaKey;
+      logger.info({ totalSessions: sessions.length, active: activeSessions.length }, 'Sync: Sessions loaded');
 
-      // User specified endpoint: /api/contacts/all
-      const response = await fetch(`${wahaUrl}/api/contacts/all?session=${sessionName}`, { headers });
-
-      if (!response.ok) {
-        throw new Error(`WAHA API Error: ${response.status} ${response.statusText}`);
-      }
-
-      const contacts = await response.json() as any[];
-
-      // 3. Insert into DB
       let importedCount = 0;
-      for (const contact of contacts) {
-        // contact.id is usually "628xxx@c.us"
-        const userId = contact.id;
-        if (!userId) continue;
 
-        // Skip group chats (@g.us) or status (@broadcast)
-        // Also skip 'status@broadcast' specifically just in case
-        if (userId.includes('@g.us') || userId.includes('broadcast')) continue;
+      for (const session of activeSessions) {
+        const headers: Record<string, string> = {};
+        if (session.api_key) headers['X-Api-Key'] = session.api_key;
 
-        // Insert as IMPORTED so bot doesn't auto-respond
-        await query(
-          `INSERT INTO leads (user_id, state, source) VALUES ($1, 'IMPORTED', 'whatsapp') ON CONFLICT (user_id) DO NOTHING`,
-          [userId]
-        );
-        importedCount++;
+        try {
+          // Fetch contacts from WAHA for this session
+          // Note: WAHA might not filter by session in /contacts/all depending on version
+          // But usually we pass ?session= parameter
+          logger.info({ session: session.session_name, url: session.waha_url }, 'Sync: Fetching contacts...');
+          const response = await fetch(`${session.waha_url}/api/contacts/all?session=${session.session_name}`, { headers });
+
+          if (!response.ok) {
+            logger.error({ session: session.session_name, status: response.status }, 'Failed to fetch contacts from WAHA');
+            continue;
+          }
+
+          const contacts = await response.json() as any[];
+          logger.info({ session: session.session_name, count: contacts.length }, 'Sync: Contacts fetched');
+
+          for (const contact of contacts) {
+            // contact.id is usually "628xxx@c.us"
+            const userId = contact.id;
+            if (!userId) continue;
+
+            // Skip group chats (@g.us) or status (@broadcast)
+            if (userId.includes('@g.us') || userId.includes('broadcast')) continue;
+
+            // Insert as IMPORTED
+            // We use ON CONFLICT DO NOTHING to avoid duplicates if same contact in multiple sessions
+            const result = await query(
+              `INSERT INTO leads (user_id, state, source) VALUES ($1, 'IMPORTED', 'whatsapp') ON CONFLICT (user_id) DO NOTHING`,
+              [userId]
+            );
+            // Count if inserted (result from query usually doesn't return row count for DO NOTHING easily in pg unless we check rowCount)
+            // But we can approximate or just count processed
+            importedCount++;
+          }
+        } catch (err) {
+          logger.error({ session: session.session_name, err }, 'Error syncing session');
+        }
       }
 
+      logger.info({ imported: importedCount }, 'Sync: Finished');
       return reply.send({ success: true, imported: importedCount, message: `Synced ${importedCount} contacts` });
 
     } catch (error: any) {

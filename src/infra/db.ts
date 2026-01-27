@@ -136,6 +136,7 @@ export async function initializeDatabase(): Promise<void> {
       CREATE TABLE IF NOT EXISTS lead_form_data (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        biodata TEXT,
         source_info TEXT,
         business_type TEXT,
         budget TEXT,
@@ -143,6 +144,15 @@ export async function initializeDatabase(): Promise<void> {
         completed BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
+    `);
+
+    // Add biodata column if not exists (migration)
+    await client.query(`
+      DO $$ BEGIN
+        ALTER TABLE lead_form_data ADD COLUMN IF NOT EXISTS biodata TEXT;
+      EXCEPTION
+        WHEN duplicate_column THEN null;
+      END $$;
     `);
 
     // Create indexes
@@ -161,6 +171,17 @@ export async function initializeDatabase(): Promise<void> {
         content TEXT NOT NULL,
         description VARCHAR(255),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+
+    // Create webhook_logs table for history
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS webhook_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        session_name VARCHAR(100),
+        event_type VARCHAR(100),
+        payload JSONB,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
     `);
 

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import useSWR, { mutate } from 'swr';
-import { Smartphone, Plus, Edit, Trash2, Loader2 } from 'lucide-react';
+import { Smartphone, Plus, Edit, Trash2, Loader2, RefreshCw } from 'lucide-react';
 import { API_BASE, fetcher } from '@/lib/api';
 
 interface WAHASession {
@@ -50,6 +50,21 @@ export default function WAHASessionsPage() {
             setDeleteConfirm(null);
         } catch (error) {
             alert('Failed to delete session');
+        }
+    };
+
+    const handleCheckConnection = async (sessionName: string) => {
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/waha/sessions/${sessionName}/status`);
+            const result = await res.json();
+
+            if (result.success && result.data.online) {
+                alert(`✅ Connection Successful!\nStatus: Online\nPhone: ${result.data.phone || 'Unknown'}`);
+            } else {
+                alert(`❌ Connection Failed\nError: ${result.data?.error || result.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            alert('Failed to check connection');
         }
     };
 
@@ -142,6 +157,13 @@ export default function WAHASessionsPage() {
                                     </td>
                                     <td className="p-4">
                                         <div className="flex items-center justify-end gap-2">
+                                            <button
+                                                onClick={() => handleCheckConnection(session.session_name)}
+                                                className="p-2 hover:bg-muted rounded-lg text-blue-500 hover:text-blue-600"
+                                                title="Check Connection"
+                                            >
+                                                <RefreshCw className="h-4 w-4" />
+                                            </button>
                                             <button
                                                 onClick={() => {
                                                     setEditingSession(session);
