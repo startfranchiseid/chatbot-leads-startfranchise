@@ -49,32 +49,46 @@ async function sendWAHAReply(chatId: string, message: string, sessionName: strin
     return;
   }
 
-  const wahaUrl = process.env.WAHA_API_URL || 'http://localhost:3001';
-  const apiKey = process.env.WAHA_API_KEY || '';
-
   try {
-    logger.debug({ wahaUrl, sessionName, chatId }, 'Sending WAHA reply');
+    // 1. Fetch session details from database (for correct URL and API Key)
+    const { getSessionByName } = await import('../waha/session.service.js');
+    const session = await getSessionByName(sessionName);
 
-    const response = await fetch(`${wahaUrl}/api/sendText`, {
+    const wahaUrl = session?.waha_url || process.env.WAHA_API_URL || 'http://localhost:3001';
+    const apiKey = session?.api_key || process.env.WAHA_API_KEY || '';
+
+    // 2. Normalize chatId for WAHA (@c.us is standard, @s.whatsapp.net might cause issues in some engines)
+    const normalizedChatId = chatId.split('@')[0] + '@c.us';
+
+    logger.info({ wahaUrl, sessionName, chatId: normalizedChatId }, 'Sending WAHA reply');
+
+    // 3. Send request (Include session in both body and query for maximum compatibility)
+    const response = await fetch(`${wahaUrl}/api/sendText?session=${sessionName}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Api-Key': apiKey,
       },
       body: JSON.stringify({
-        chatId: chatId.includes('@') ? chatId : `${chatId}@c.us`,
+        chatId: normalizedChatId,
         text: message,
         session: sessionName,
       }),
     });
 
     if (!response.ok) {
+      const errorText = await response.text();
+      logger.error({
+        status: response.status,
+        error: errorText,
+        url: `${wahaUrl}/api/sendText?session=${sessionName}`
+      }, 'WAHA API error');
       throw new Error(`WAHA API error: ${response.status}`);
     }
 
-    logger.debug({ chatId }, 'WAHA reply sent');
+    logger.debug({ chatId: normalizedChatId }, 'WAHA reply sent successfully');
   } catch (error) {
-    logger.error({ error, chatId }, 'Failed to send WAHA reply');
+    logger.error({ error, chatId, sessionName }, 'Failed to send WAHA reply');
     throw error;
   }
 }
