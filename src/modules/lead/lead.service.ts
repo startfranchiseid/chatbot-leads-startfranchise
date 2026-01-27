@@ -35,14 +35,14 @@ export async function getLeadByUserId(userId: string): Promise<Lead | null> {
     return rows[0];
   }
 
-  // If this is a @lid format, also check whatsapp_lid column
+  // Check if this is a @lid format, also check alt_id column
   if (isLidFormat(userId)) {
     rows = await query<Lead>(
-      'SELECT * FROM leads WHERE whatsapp_lid = $1',
+      'SELECT * FROM leads WHERE alt_id = $1',
       [userId]
     );
     if (rows[0]) {
-      logger.debug({ userId, foundVia: 'whatsapp_lid' }, 'Found lead via LID');
+      logger.debug({ userId, foundVia: 'alt_id' }, 'Found lead via LID');
       return rows[0];
     }
   }
@@ -55,7 +55,7 @@ export async function getLeadByUserId(userId: string): Promise<Lead | null> {
  */
 export async function getLeadByLid(lid: string): Promise<Lead | null> {
   const rows = await query<Lead>(
-    'SELECT * FROM leads WHERE whatsapp_lid = $1',
+    'SELECT * FROM leads WHERE alt_id = $1',
     [lid]
   );
   return rows[0] || null;

@@ -119,6 +119,16 @@ export async function initializeDatabase(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_leads_whatsapp_lid ON leads(whatsapp_lid) WHERE whatsapp_lid IS NOT NULL;
     `);
 
+    // Add alt_id column if not exists (replaced whatsapp_lid)
+    await client.query(`
+      DO $$ BEGIN
+        ALTER TABLE leads ADD COLUMN IF NOT EXISTS alt_id TEXT;
+        CREATE INDEX IF NOT EXISTS idx_leads_alt_id ON leads(alt_id) WHERE alt_id IS NOT NULL;
+      EXCEPTION
+        WHEN duplicate_column THEN null;
+      END $$;
+    `);
+
     // Create lead_interactions table
     await client.query(`
       CREATE TABLE IF NOT EXISTS lead_interactions (
@@ -178,11 +188,23 @@ export async function initializeDatabase(): Promise<void> {
     await client.query(`
       CREATE TABLE IF NOT EXISTS webhook_logs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        source VARCHAR(50),
+        status VARCHAR(50),
         session_name VARCHAR(100),
         event_type VARCHAR(100),
         payload JSONB,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
+    `);
+
+    // Add source and status columns to webhook_logs if not exist
+    await client.query(`
+      DO $$ BEGIN
+        ALTER TABLE webhook_logs ADD COLUMN IF NOT EXISTS source VARCHAR(50);
+        ALTER TABLE webhook_logs ADD COLUMN IF NOT EXISTS status VARCHAR(50);
+      EXCEPTION
+        WHEN duplicate_column THEN null;
+      END $$;
     `);
 
     // Create waha_sessions table for multi-number management
