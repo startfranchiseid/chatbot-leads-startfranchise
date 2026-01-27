@@ -25,10 +25,14 @@ export async function buildApp(): Promise<FastifyInstance> {
     origin: [
       'http://localhost:5173',
       'http://127.0.0.1:5173',
+      'http://76.13.22.182:5173',
+      'http://76.13.22.182:5174', // VPS Dashboard Port
+      'http://76.13.22.182:4000', // VPS Backend Port (Self)
       'http://31.97.48.9:5173',
       /\.startfranchise\.id$/,  // Allow all startfranchise.id subdomains
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    credentials: true, // Enable cookies if needed
   });
 
   // Register rate limiting
